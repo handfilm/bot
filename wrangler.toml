@@ -1,0 +1,20 @@
+# Cloudflare Worker config for the multi-AI chatbot backend.
+# Deploy via dashboard (recommended, no CLI needed) OR via `wrangler deploy`
+# if you ever work from a machine with Node installed.
+
+name = "multi-ai-bot"
+main = "index.js"
+compatibility_date = "2026-07-01"
+
+# Plain (non-secret) variables go here. Secrets (API keys) are NOT put in this
+# file — set them via the dashboard (Settings -> Variables and Secrets) or:
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put GEMINI_API_KEY
+#   wrangler secret put XAI_API_KEY
+[vars]
+ALLOWED_ORIGIN = "https://yourdomain.com"
+
+# Optional: attach your own domain instead of *.workers.dev
+# [[routes]]
+# pattern = "ai.yourdomain.com/*"
+# custom_domain = true

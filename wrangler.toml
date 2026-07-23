@@ -2,7 +2,7 @@
 # Deploy via dashboard (recommended, no CLI needed) OR via `wrangler deploy`
 # if you ever work from a machine with Node installed.
 
-name = "multi-ai-bot"
+name = "the-o"
 main = "index.js"
 compatibility_date = "2026-07-01"
 

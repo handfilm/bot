@@ -1,21 +1,397 @@
 <!DOCTYPE html>
-<html lang="bn">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Multi-AI Chatbot Test Page</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAWx // BOT — Dispatch Terminal</title>
+<meta name="description" content="RAWx BOT — triple-engine dispatch terminal. Ask, Create, Deploy. Routed live across Claude, Gemini and Grok.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#0d0d0c;
+    --void-2:#161615;
+    --paper:#ece7dc;
+    --paper-dim:#c9c4b6;
+    --signal:#c81d11;
+    --signal-dim:#7a140b;
+    --steel:#6b6b62;
+    --brass:#a8823d;
+    --line:rgba(236,231,220,0.14);
+    --line-strong:rgba(236,231,220,0.32);
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+    --stamp:'Anton', sans-serif;
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--void);
+    color:var(--paper);
+    font-family:var(--mono);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+
+  /* ---------- calibration grid backdrop ---------- */
+  .grid-field{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:48px 48px;
+    opacity:0.5;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+
+  .scanline{
+    position:fixed; left:0; right:0; height:1px; z-index:1; pointer-events:none;
+    background:linear-gradient(90deg, transparent, var(--signal), transparent);
+    opacity:0.6;
+    animation:scan 7s linear infinite;
+  }
+  @keyframes scan{
+    0%{ top:-2%; opacity:0; }
+    5%{ opacity:0.6; }
+    95%{ opacity:0.6; }
+    100%{ top:102%; opacity:0; }
+  }
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    position:relative; z-index:5;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 28px;
+    border-bottom:1px solid var(--line);
+  }
+  .mark{
+    font-family:var(--stamp);
+    font-size:1.15rem;
+    letter-spacing:0.02em;
+    display:flex; align-items:center; gap:10px;
+  }
+  .mark .dot{
+    width:9px; height:9px; background:var(--signal); display:inline-block;
+    animation:pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{ opacity:1; box-shadow:0 0 0 0 rgba(200,29,17,0.5); }
+    50%{ opacity:0.4; box-shadow:0 0 0 6px rgba(200,29,17,0); }
+  }
+  .status-line{
+    font-size:0.68rem; letter-spacing:0.08em; color:var(--paper-dim);
+    text-transform:uppercase;
+    display:flex; gap:18px;
+  }
+  .status-line span{ color:var(--paper); }
+
+  /* ---------- hero ---------- */
+  .hero{
+    position:relative; z-index:2;
+    padding:64px 28px 40px;
+    max-width:1100px;
+  }
+  .eyebrow{
+    font-size:0.7rem; letter-spacing:0.22em; text-transform:uppercase;
+    color:var(--signal); font-weight:700;
+    display:flex; align-items:center; gap:10px; margin-bottom:22px;
+  }
+  .eyebrow::before{
+    content:''; width:24px; height:2px; background:var(--signal);
+  }
+  h1.stamp{
+    font-family:var(--stamp);
+    font-weight:400;
+    font-size:clamp(3rem, 11vw, 7.5rem);
+    line-height:0.88;
+    letter-spacing:-0.01em;
+    text-transform:uppercase;
+    color:var(--paper);
+  }
+  h1.stamp .accent{ color:var(--signal); }
+  .hero-sub{
+    margin-top:26px;
+    max-width:560px;
+    font-size:0.95rem;
+    line-height:1.7;
+    color:var(--paper-dim);
+  }
+  .hero-sub b{ color:var(--paper); font-weight:700; }
+
+  .hero-cta{
+    margin-top:36px;
+    display:flex; gap:14px; flex-wrap:wrap;
+  }
+  .btn{
+    font-family:var(--mono);
+    font-size:0.78rem;
+    font-weight:700;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    padding:15px 26px;
+    border:1px solid var(--line-strong);
+    background:transparent;
+    color:var(--paper);
+    cursor:pointer;
+    transition:background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease;
+  }
+  .btn:hover{ transform:translateY(-2px); border-color:var(--paper); }
+  .btn.primary{
+    background:var(--signal); border-color:var(--signal); color:var(--paper);
+  }
+  .btn.primary:hover{ background:#e0231a; border-color:#e0231a; }
+  .btn:active{ transform:translateY(0); }
+
+  /* ---------- manifest / process strip ---------- */
+  .manifest{
+    position:relative; z-index:2;
+    padding:20px 28px 90px;
+    max-width:1100px;
+  }
+  .manifest-head{
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom:1px solid var(--line-strong);
+    padding-bottom:14px; margin-bottom:28px;
+    flex-wrap:wrap; gap:10px;
+  }
+  .manifest-head h2{
+    font-family:var(--stamp); font-weight:400; text-transform:uppercase;
+    font-size:1.4rem; letter-spacing:0.01em;
+  }
+  .manifest-head .ref{
+    font-size:0.68rem; letter-spacing:0.1em; color:var(--steel); text-transform:uppercase;
+  }
+
+  .tickets{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:0;
+    border:1px solid var(--line-strong);
+  }
+  .ticket{
+    position:relative;
+    padding:30px 26px 26px;
+    border-right:1px dashed var(--line-strong);
+    transition:background .18s ease, transform .18s ease;
+  }
+  .ticket:last-child{ border-right:none; }
+  .ticket:hover{ background:var(--void-2); }
+  .ticket .lot{
+    font-size:0.65rem; letter-spacing:0.1em; color:var(--signal); font-weight:700;
+    margin-bottom:18px;
+  }
+  .ticket h3{
+    font-family:var(--stamp); font-weight:400; text-transform:uppercase;
+    font-size:1.9rem; margin-bottom:14px; letter-spacing:0.01em;
+  }
+  .ticket p{
+    font-size:0.82rem; line-height:1.65; color:var(--paper-dim);
+  }
+  .ticket .glyph{
+    position:absolute; top:26px; right:24px;
+    font-size:0.68rem; color:var(--steel); letter-spacing:0.05em;
+  }
+  .ticket-arrow{
+    position:absolute; right:-1px; top:50%; transform:translate(50%,-50%);
+    width:22px; height:22px; background:var(--void);
+    border:1px solid var(--line-strong);
+    display:flex; align-items:center; justify-content:center;
+    font-size:0.7rem; color:var(--signal); z-index:3;
+  }
+  @media (max-width: 780px){
+    .tickets{ grid-template-columns:1fr; }
+    .ticket{ border-right:none; border-bottom:1px dashed var(--line-strong); }
+    .ticket:last-child{ border-bottom:none; }
+    .ticket-arrow{ right:50%; top:auto; bottom:-1px; transform:translate(50%,50%) rotate(90deg); }
+  }
+
+  /* ---------- engines ---------- */
+  .engines{
+    position:relative; z-index:2;
+    padding:0 28px 90px; max-width:1100px;
+  }
+  .engines h2{
+    font-family:var(--stamp); font-weight:400; text-transform:uppercase;
+    font-size:1.4rem; border-bottom:1px solid var(--line-strong);
+    padding-bottom:14px; margin-bottom:24px;
+  }
+  .engine-grid{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
+    background:var(--line-strong);
+    border:1px solid var(--line-strong);
+  }
+  .engine{
+    background:var(--void); padding:22px 20px;
+  }
+  .engine .name{ font-weight:700; font-size:0.85rem; letter-spacing:0.03em; margin-bottom:8px; }
+  .engine .role{ font-size:0.72rem; color:var(--paper-dim); line-height:1.6; }
+  .engine .led{ display:inline-block; width:7px; height:7px; background:var(--signal); margin-right:8px; }
+  @media (max-width: 780px){ .engine-grid{ grid-template-columns:1fr; } }
+
+  /* ---------- footer ---------- */
+  footer{
+    position:relative; z-index:2;
+    border-top:1px solid var(--line);
+    padding:22px 28px;
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;
+    font-size:0.68rem; letter-spacing:0.06em; color:var(--steel); text-transform:uppercase;
+  }
+  footer b{ color:var(--paper-dim); }
+
+  @media (prefers-reduced-motion: reduce){
+    .scanline, .mark .dot{ animation:none; }
+  }
+</style>
 </head>
 <body>
 
-  <h1 style="text-align: center; margin-top: 50px;">Welcome to My Website</h1>
-  <p style="text-align: center;">Click the bottom-right chat bubble to start talking with Claude, Gemini & Grok!</p>
+<div class="grid-field"></div>
+<div class="scanline"></div>
 
-  <!-- Multi-AI Chatbot Configuration & Script -->
-  <script>
-    window.MULTI_AI_ENDPOINT = "https://multi-ai-bot.<your-subdomain>.workers.dev"; //[span_4](start_span)[span_4](end_span)
-    window.MULTI_AI_STREAM = true; //[span_5](start_span)[span_5](end_span)
-  </script>
-  <script src="chat-widget.js"></script> <!--[span_6](start_span)[span_6](end_span) -->
+<header class="topbar">
+  <div class="mark"><span class="dot"></span>RAWx // BOT</div>
+  <div class="status-line">
+    <div>ENGINES <span>03 ACTIVE</span></div>
+    <div>STATUS <span>ONLINE</span></div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="eyebrow">Dispatch Terminal — Handled &amp; Head Group</div>
+  <h1 class="stamp">ASK<span class="accent">.</span> CREATE<span class="accent">.</span> DEPLOY<span class="accent">.</span></h1>
+  <p class="hero-sub">A single terminal routes every message across three engines — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — the way a work order moves through a floor: intake, fabrication, shipment. No queue, no wrong desk. The router picks the right hand for the job.</p>
+  <div class="hero-cta">
+    <button class="btn primary" id="open-terminal">Open Terminal ↗</button>
+    <a class="btn" href="#manifest">View Manifest</a>
+  </div>
+</section>
+
+<section class="manifest" id="manifest">
+  <div class="manifest-head">
+    <h2>Work Order — 3 Stage</h2>
+    <div class="ref">DISPATCH REF: RXB-2026-07</div>
+  </div>
+
+  <div class="tickets">
+    <div class="ticket">
+      <div class="glyph">01 / IN</div>
+      <div class="lot">TICKET — ASK</div>
+      <h3>Intake</h3>
+      <p>Put the question, spec, or draft on the floor as-is — a buyer query, a product brief, a line of copy. The terminal reads it and picks the desk built for it.</p>
+      <div class="ticket-arrow">→</div>
+    </div>
+    <div class="ticket">
+      <div class="glyph">02 / WIP</div>
+      <div class="lot">TICKET — CREATE</div>
+      <h3>Fabrication</h3>
+      <p>The routed engine builds the response — copy, code, a spec sheet, a reasoned answer — streamed back as it's made, not held until finished.</p>
+      <div class="ticket-arrow">→</div>
+    </div>
+    <div class="ticket">
+      <div class="glyph">03 / OUT</div>
+      <div class="lot">TICKET — DEPLOY</div>
+      <h3>Shipment</h3>
+      <p>The finished piece lands in the thread, ready to copy, send, or paste straight into the next system. No extra handling before it ships.</p>
+    </div>
+  </div>
+</section>
+
+<section class="engines">
+  <h2>Engine Roster</h2>
+  <div class="engine-grid">
+    <div class="engine">
+      <div class="name"><span class="led"></span>CLAUDE — ANTHROPIC</div>
+      <div class="role">Default desk. Reasoning, writing, careful replies, long threads.</div>
+    </div>
+    <div class="engine">
+      <div class="name"><span class="led"></span>GEMINI — GOOGLE</div>
+      <div class="role">Routed for images, documents, files, and multimodal intake.</div>
+    </div>
+    <div class="engine">
+      <div class="name"><span class="led"></span>GROK — XAI</div>
+      <div class="role">Routed for live/current queries — news, prices, right-now facts.</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>&copy; 2026 <b>HANDS &amp; HEAD GROUP</b> — RAWx Division</div>
+  <div>Terminal build RXB-01 — three-engine fallback chain</div>
+</footer>
+
+<!-- Multi-AI Chatbot Configuration & Script -->
+<script>
+  .MULTI_AI_ENDPOINT = "https://bot.handsandhead.workers.dev";
+  .MULTI_AI_STREAM = true;
+</script>
+<script src="chat-widget.js"></script>
+
+<script>
+  // Wire the hero CTA to the widget's own launcher button.
+  document.getElementById('open-terminal').addEventListener('click', function(){
+    var launcher = document.querySelector('.mab-launcher');
+    if (launcher) launcher.click();
+  });
+
+  // ---------------------------------------------------------------------
+  // Brutalist re-theme for the chat widget. chat-widget.js injects its own
+  // <style> tag at load time; this block runs after and is appended later
+  // in <head>, so it wins the cascade without needing to touch the widget
+  // source file directly.
+  // ---------------------------------------------------------------------
+  var override = document.createElement('style');
+  override.textContent = `
+    .mab-launcher{
+      border-radius:0 !important;
+      background:#c81d11 !important;
+      border:1px solid #c81d11 !important;
+      box-shadow:none !important;
+    }
+    .mab-launcher:hover{ background:#e0231a !important; }
+    .mab-panel{
+      border-radius:0 !important;
+      background:#0d0d0c !important;
+      border:1px solid rgba(236,231,220,0.32) !important;
+      box-shadow:0 24px 60px rgba(0,0,0,.55) !important;
+      font-family:'JetBrains Mono', ui-monospace, monospace !important;
+    }
+    .mab-head{
+      background:#0d0d0c !important;
+      border-bottom:1px solid rgba(236,231,220,0.18) !important;
+      text-transform:uppercase; letter-spacing:0.08em; font-size:0.68rem !important;
+      font-weight:700;
+    }
+    .mab-head select{
+      background:#161615 !important; color:#ece7dc !important;
+      border:1px solid rgba(236,231,220,0.32) !important; border-radius:0 !important;
+      font-family:'JetBrains Mono', monospace !important;
+    }
+    .mab-close{ color:#ece7dc !important; }
+    .mab-messages{ background:#161615 !important; }
+    .mab-msg{
+      border-radius:0 !important;
+      font-family:'JetBrains Mono', ui-monospace, monospace !important;
+      font-size:0.8rem !important;
+    }
+    .mab-msg.user{ background:#c81d11 !important; color:#ece7dc !important; }
+    .mab-msg.assistant{ background:#0d0d0c !important; color:#ece7dc !important; border:1px solid rgba(236,231,220,0.14) !important; }
+    .mab-msg.assistant .mab-provider-tag{ color:#c81d11 !important; opacity:1 !important; font-weight:700; }
+    .mab-form{ border-top:1px solid rgba(236,231,220,0.18) !important; }
+    .mab-form input{
+      background:#0d0d0c !important; color:#ece7dc !important;
+      font-family:'JetBrains Mono', monospace !important; font-size:0.8rem !important;
+    }
+    .mab-form input::placeholder{ color:#6b6b62 !important; }
+    .mab-form button{
+      background:#c81d11 !important; border-radius:0 !important;
+      text-transform:uppercase; letter-spacing:0.06em; font-size:0.72rem !important;
+      font-weight:700;
+    }
+    .mab-form button:hover{ background:#e0231a !important; }
+  `;
+  document.head.appendChild(override);
+</script>
 
 </body>
 </html>

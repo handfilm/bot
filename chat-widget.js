@@ -1,6 +1,12 @@
 /**
  * ==========================================================================
- * RAWx BOT Chat Widget — Step 2: persistent memory + image upload
+ * RAWx BOT Chat Widget — Step 3: memory + image upload + Drive folder search
+ * ==========================================================================
+ * New in this version (on top of Step 2):
+ *   - A 🔍 button next to History/New chat opens a search panel.
+ *   - Typing a query hits the Worker's /api/drive-search route and shows
+ *     matching files (thumbnail + name) from your Google Drive folder.
+ *   - Tapping a result opens it in Drive in a new tab.
  * ==========================================================================
  * Usage (unchanged):
  *   <script>
@@ -113,6 +119,32 @@
   .mab-sidebar-item .mab-conv-title{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .mab-sidebar-item .mab-conv-time{ font-size:0.66rem; color:#888; }
   .mab-sidebar-empty{ padding:20px 16px; font-size:0.78rem; color:#888; text-align:center; }
+
+  .mab-search-panel{
+    width:100%; background:#fff; overflow-y:auto; display:flex; flex-direction:column;
+  }
+  .mab-search-bar{ display:flex; gap:8px; padding:12px; border-bottom:1px solid #eee; }
+  .mab-search-bar input{
+    flex:1; border:1px solid #ddd; border-radius:6px; padding:8px 10px; font-size:0.82rem; outline:none;
+  }
+  .mab-search-bar button{
+    background:#1a1a1a; color:#fff; border:none; border-radius:6px; padding:0 14px; font-size:0.78rem; cursor:pointer;
+  }
+  .mab-search-results{
+    flex:1; overflow-y:auto; padding:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start;
+  }
+  .mab-search-item{
+    border:1px solid #eee; border-radius:8px; overflow:hidden; cursor:pointer; text-decoration:none; color:#222;
+    display:flex; flex-direction:column; background:#fafafa;
+  }
+  .mab-search-item .mab-search-thumb{
+    width:100%; height:90px; background:#eee; display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  .mab-search-item .mab-search-thumb img{ width:100%; height:100%; object-fit:cover; }
+  .mab-search-item .mab-search-name{
+    font-size:0.68rem; padding:6px 8px; line-height:1.3; word-break:break-word;
+  }
+  .mab-search-empty{ padding:24px 16px; font-size:0.78rem; color:#888; text-align:center; grid-column:1 / -1; }
   `;
 
   function injectStyle() {
@@ -134,6 +166,7 @@
       <div class="mab-head">
         <div class="mab-head-actions">
           <button type="button" class="mab-icon-btn mab-history-toggle" aria-label="History" title="History">&#9776;</button>
+          <button type="button" class="mab-icon-btn mab-search-toggle" aria-label="Search" title="Search">&#128269;</button>
           <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
         </div>
         <span class="mab-head-title">Ask us anything</span>
@@ -151,6 +184,13 @@
         <div class="mab-sidebar" style="display:none;">
           <button type="button" class="mab-sidebar-new">+ New conversation</button>
           <div class="mab-sidebar-list"></div>
+        </div>
+        <div class="mab-search-panel" style="display:none;">
+          <div class="mab-search-bar">
+            <input type="text" class="mab-search-input" placeholder="Search files...">
+            <button type="button" class="mab-search-btn">Search</button>
+          </div>
+          <div class="mab-search-results"></div>
         </div>
         <div class="mab-messages"></div>
       </div>
@@ -228,6 +268,11 @@
     const sidebarEl = panel.querySelector(".mab-sidebar");
     const sidebarListEl = panel.querySelector(".mab-sidebar-list");
     const historyToggle = panel.querySelector(".mab-history-toggle");
+    const searchPanelEl = panel.querySelector(".mab-search-panel");
+    const searchToggle = panel.querySelector(".mab-search-toggle");
+    const searchInput = panel.querySelector(".mab-search-input");
+    const searchBtn = panel.querySelector(".mab-search-btn");
+    const searchResultsEl = panel.querySelector(".mab-search-results");
     const newChatBtn = panel.querySelector(".mab-new-chat");
     const sidebarNewBtn = panel.querySelector(".mab-sidebar-new");
     const form = panel.querySelector(".mab-form");
@@ -337,11 +382,17 @@
         history = data.messages || [];
         setActiveConversation(id);
         renderHistoryIntoMessages();
-        sidebarEl.style.display = "none";
-        messagesEl.style.display = "flex";
+        setView("chat");
       } catch (err) {
         console.warn("[rawx-bot-widget]", err);
       }
+    }
+
+    // Only one of chat / history / search is visible at a time.
+    function setView(view) {
+      messagesEl.style.display = view === "chat" ? "flex" : "none";
+      sidebarEl.style.display = view === "history" ? "flex" : "none";
+      searchPanelEl.style.display = view === "search" ? "flex" : "none";
     }
 
     function startNewConversation() {
@@ -350,21 +401,67 @@
       messagesEl.innerHTML = "";
       pendingImages = [];
       renderPreview();
-      sidebarEl.style.display = "none";
-      messagesEl.style.display = "flex";
+      setView("chat");
       input.focus();
     }
 
     historyToggle.addEventListener("click", () => {
       const showing = sidebarEl.style.display !== "none";
       if (showing) {
-        sidebarEl.style.display = "none";
-        messagesEl.style.display = "flex";
+        setView("chat");
       } else {
-        sidebarEl.style.display = "flex";
-        messagesEl.style.display = "none";
+        setView("history");
         loadConversationList();
       }
+    });
+
+    searchToggle.addEventListener("click", () => {
+      const showing = searchPanelEl.style.display !== "none";
+      if (showing) {
+        setView("chat");
+      } else {
+        setView("search");
+        searchInput.focus();
+      }
+    });
+
+    async function runDriveSearch() {
+      const q = searchInput.value.trim();
+      if (!q) return;
+      searchResultsEl.innerHTML = `<div class="mab-search-empty">Searching…</div>`;
+      try {
+        const res = await fetch(`${ENDPOINT}/api/drive-search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "search failed");
+        const results = data.results || [];
+        if (results.length === 0) {
+          searchResultsEl.innerHTML = `<div class="mab-search-empty">No matching files found.</div>`;
+          return;
+        }
+        searchResultsEl.innerHTML = "";
+        results.forEach((r) => {
+          const a = document.createElement("a");
+          a.className = "mab-search-item";
+          a.href = r.webViewLink || "#";
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          const thumbSrc = r.thumbnailLink || r.iconLink || "";
+          a.innerHTML = `
+            <div class="mab-search-thumb">${thumbSrc ? `<img src="${thumbSrc}" alt="">` : ""}</div>
+            <div class="mab-search-name"></div>
+          `;
+          a.querySelector(".mab-search-name").textContent = r.name || "Untitled";
+          searchResultsEl.appendChild(a);
+        });
+      } catch (err) {
+        searchResultsEl.innerHTML = `<div class="mab-search-empty">Couldn't load results.</div>`;
+        console.warn("[rawx-bot-widget]", err);
+      }
+    }
+
+    searchBtn.addEventListener("click", runDriveSearch);
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") runDriveSearch();
     });
 
     newChatBtn.addEventListener("click", startNewConversation);

@@ -1,10 +1,26 @@
 /**
  * ==========================================================================
- * RAWx BOT Backend — Claude + Gemini + Grok + memory + upload + Drive search
+ * RAWx BOT Backend — Claude + Gemini + Grok + memory + upload + search + generate
  * ==========================================================================
  *
- * STEP 3 OF 4 (Memory > Upload > Search > Generate) — this file adds, on top
- * of the Step 2 (Memory + Upload) backend:
+ * STEP 4 OF 4 (Memory > Upload > Search > Generate) — this file adds, on top
+ * of the Step 3 (Memory + Upload + Search) backend, a small v1 of Generate:
+ *
+ *   - POST /api/generate/document — body { docType, brief }. docType is one
+ *     of "quotation" | "specsheet" | "productcopy" (anything else falls back
+ *     to productcopy). Calls the same Claude/Gemini/Grok fallback chain used
+ *     for chat, with a document-specific system prompt, and returns
+ *     { docType, text } as plain text (no markdown) meant to be copy-pasted.
+ *   - POST /api/generate/image — body { prompt }. Calls Gemini's image model
+ *     directly (reuses the existing GEMINI_API_KEY secret, no new secret
+ *     needed) and returns { image: { mediaType, data } } where data is
+ *     base64 PNG bytes.
+ *   - Neither endpoint is saved to conversation history/KV — they're a
+ *     separate one-shot tool, not part of the chat thread. Nothing new to
+ *     configure on the Worker besides pasting this file and Deploy.
+ *
+ * Everything below this point (Memory + Upload + Search) is unchanged from
+ * Step 3:
  *
  *   - GET /api/drive-search?q=... — searches a public "anyone with the link"
  *     Google Drive folder by filename keyword match (v1, no AI captioning
@@ -72,6 +88,13 @@ const MODEL_IDS = {
   gemini: "gemini-3.5-flash",
   grok: "grok-4.1-fast",
 };
+
+// Image-generation model (Step 4 / Generate). Google renames these fairly
+// often — if this id ever 404s, open Google AI Studio -> your API key's
+// project -> Models, find the current "image" capable Gemini model, and
+// swap the string below. Uses the same GEMINI_API_KEY secret, no new
+// secret needed.
+const IMAGE_MODEL_ID = "gemini-3.1-flash-image-preview";
 
 // Cap how many conversations we keep per session, and how many messages per
 // conversation, so KV storage never grows unbounded on the free tier.
@@ -173,6 +196,54 @@ function validateImages(images) {
     }
   }
   return { ok: true, images };
+}
+
+// ---------------------------------------------------------------------------
+// Document + image generation (Step 4, v1 — small on purpose)
+// ---------------------------------------------------------------------------
+// Each entry is the system prompt used for that document type. Keep the
+// output plain text (no markdown tables/asterisks) since it's meant to be
+// copy-pasted straight into an email, WhatsApp message, or another doc.
+const DOC_TYPE_PROMPTS = {
+  quotation: `You write export quotations for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business with 25 years of experience exporting to Japan.
+Given a short brief from the owner (product, quantity, materials, any price/lead-time hints), write a clean, professional export quotation as plain text — buyer-ready. Include: product name/description, quantity, unit price (if given, else say "price on request"), materials, MOQ if mentioned, lead time if mentioned, payment terms if mentioned (else a standard placeholder like "L/C at sight" clearly marked as a placeholder to confirm), and a short professional closing line. No markdown formatting, no asterisks — plain text with line breaks, ready to paste into an email.`,
+  specsheet: `You write product spec sheets for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business.
+Given a short brief about a product, write a clean spec sheet as plain text with clearly labeled fields: Product Name, Category, Materials/Composition, Available Sizes, Available Colors, Construction/Finishing details, Packing details, and Notes. If the brief doesn't mention a field, write a sensible placeholder in [brackets] for the owner to fill in rather than inventing a false fact. No markdown formatting — plain text, ready to paste.`,
+  productcopy: `You write buyer-facing product copy/catalog descriptions for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business with 25 years of experience exporting to Japan.
+Given a short brief about a product, write 2-3 short paragraphs of persuasive, professional catalog copy suitable for a buyer-facing website or lookbook. Mention craftsmanship and export experience where natural. Plain text, no markdown formatting, no asterisks.`,
+};
+
+async function generateDocument(env, docType, brief) {
+  const systemPrompt = DOC_TYPE_PROMPTS[docType] || DOC_TYPE_PROMPTS.productcopy;
+  const order = DEFAULT_ORDER.filter((p) => PROVIDERS[p].isConfigured(env));
+  if (order.length === 0) throw new Error("No AI provider configured");
+  const result = await runWithFallback(
+    env,
+    [{ role: "user", content: brief }],
+    { system: systemPrompt, images: [], stream: false },
+    order
+  );
+  return result.text;
+}
+
+async function generateImage(env, prompt) {
+  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_MODEL_ID}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { responseModalities: ["IMAGE"] },
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Gemini image API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+  if (!part) throw new Error("Model did not return an image — try a more descriptive prompt.");
+  return { mediaType: part.inlineData.mimeType || "image/png", data: part.inlineData.data };
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +618,42 @@ export default {
         const files = await getCachedDriveFiles(env);
         const results = scoreDriveFiles(files, q);
         return json({ query: q, results }, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // ---------------- POST /api/generate/document ----------------
+    if (request.method === "POST" && url.pathname === "/api/generate/document") {
+      let genBody;
+      try {
+        genBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { docType, brief } = genBody;
+      if (!brief || !brief.trim()) return json({ error: "brief required" }, 400, headers);
+      try {
+        const text = await generateDocument(env, docType, brief.trim());
+        return json({ docType: docType || "productcopy", text }, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // ---------------- POST /api/generate/image ----------------
+    if (request.method === "POST" && url.pathname === "/api/generate/image") {
+      let genBody;
+      try {
+        genBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { prompt } = genBody;
+      if (!prompt || !prompt.trim()) return json({ error: "prompt required" }, 400, headers);
+      try {
+        const image = await generateImage(env, prompt.trim());
+        return json({ image }, 200, headers);
       } catch (err) {
         return json({ error: err.message }, 502, headers);
       }

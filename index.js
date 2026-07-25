@@ -1,22 +1,30 @@
 /**
  * ==========================================================================
- * RAWx BOT Backend — Claude + Gemini + Grok + persistent conversation memory
+ * RAWx BOT Backend — Claude + Gemini + Grok + memory + image upload (vision)
  * ==========================================================================
  *
- * STEP 1 OF 4 (Memory > Upload > Search > Generate) — this file adds:
- *   - Multiple named conversations per browser (via a client-generated
- *     sessionId stored in localStorage)
- *   - Conversation history persisted in Cloudflare KV (binding: CHAT_KV)
- *   - New routes:
- *       GET    /api/conversations?sessionId=...          -> list conversations
- *       GET    /api/conversations/:id?sessionId=...       -> load one conversation
- *       DELETE /api/conversations/:id?sessionId=...        -> delete one conversation
- *       POST   /   (unchanged path, extended body)         -> chat, now also saves
+ * STEP 2 OF 4 (Memory > Upload > Search > Generate) — this file adds, on top
+ * of the Step 1 (Memory) backend:
+ *
+ *   - Images can be attached to a chat turn: POST body gets an optional
+ *     `images: [{ mediaType, data }]` field (data = base64, no data: prefix).
+ *   - Claude and Gemini both receive images as real vision input.
+ *   - Grok has no verified vision support yet, so any turn that includes
+ *     images is silently rerouted away from Grok (whether Grok was picked
+ *     by the auto-router or explicitly selected in the provider dropdown) —
+ *     it falls through to Gemini/Claude instead. No error is shown to the
+ *     user for this.
+ *   - Server-side validation mirrors the client limits (max 3 images per
+ *     turn, 4MB each, jpeg/png/webp/gif only) as a second layer of defense.
+ *   - Images are NEVER written to KV. When a turn with images is saved to
+ *     conversation history, the image bytes are dropped and replaced with
+ *     a short "[N image(s) attached]" marker on the saved user message.
+ *     Reloading an old conversation will not show the image itself.
  *
  * DEPLOY:
- *   1. Create a KV namespace "RAWX_BOT_KV" in the Cloudflare dashboard.
- *   2. Bind it to this Worker as CHAT_KV (Settings -> Bindings -> Add -> KV).
- *   3. Paste this whole file into Edit Code, then Deploy.
+ *   Paste this whole file into the Worker's Edit Code screen and hit
+ *   Deploy (Save alone does not apply it). No other Worker settings need
+ *   to change from Step 1 — same CHAT_KV binding, same secrets.
  * ==========================================================================
  */
 
@@ -58,9 +66,39 @@ const MAX_CONVERSATIONS_PER_SESSION = 50;
 const MAX_MESSAGES_PER_CONVERSATION = 200;
 
 // ---------------------------------------------------------------------------
+// Image upload limits (must match the client-side limits in chat-widget.js)
+// ---------------------------------------------------------------------------
+const MAX_IMAGES_PER_TURN = 3;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+function validateImages(images) {
+  if (images === undefined || images === null) return { ok: true, images: [] };
+  if (!Array.isArray(images)) return { ok: false, error: "images must be an array" };
+  if (images.length > MAX_IMAGES_PER_TURN) {
+    return { ok: false, error: `Max ${MAX_IMAGES_PER_TURN} images per message` };
+  }
+  for (const img of images) {
+    if (!img || typeof img.data !== "string" || typeof img.mediaType !== "string") {
+      return { ok: false, error: "each image needs mediaType and data (base64)" };
+    }
+    if (!ALLOWED_IMAGE_TYPES.has(img.mediaType)) {
+      return { ok: false, error: `unsupported image type: ${img.mediaType}` };
+    }
+    // base64 -> approx decoded byte size, without actually decoding
+    const approxBytes = Math.ceil((img.data.length * 3) / 4);
+    if (approxBytes > MAX_IMAGE_BYTES) {
+      return { ok: false, error: "image exceeds 4MB limit" };
+    }
+  }
+  return { ok: true, images };
+}
+
+// ---------------------------------------------------------------------------
 // Auto-router
 // ---------------------------------------------------------------------------
-function autoRoute(lastUserMessage) {
+function autoRoute(lastUserMessage, hasImages) {
+  if (hasImages) return "gemini";
   const text = (lastUserMessage || "").toLowerCase();
   if (/(today|latest|current|breaking|news|right now|this week|price of|score)/.test(text)) {
     return "grok";
@@ -151,11 +189,70 @@ async function deleteConversation(env, sessionId, conversationId) {
   await saveConversationList(env, sessionId, list.filter((c) => c.id !== conversationId));
 }
 
+// Build the exact text that gets persisted to KV for a user turn that had
+// images attached. We never store the image bytes themselves.
+function imageMarker(count) {
+  return `[${count} image${count > 1 ? "s" : ""} attached]`;
+}
+
+function messagesForStorage(messages, imageCount) {
+  if (!imageCount || messages.length === 0) return messages;
+  const out = [...messages];
+  const lastIdx = out.length - 1;
+  const last = out[lastIdx];
+  out[lastIdx] = {
+    ...last,
+    content: last.content ? `${last.content}\n\n${imageMarker(imageCount)}` : imageMarker(imageCount),
+  };
+  return out;
+}
+
 // ---------------------------------------------------------------------------
-// Provider adapters (unchanged from before)
+// Provider adapters
 // ---------------------------------------------------------------------------
-async function callClaude(env, messages, { stream, writer, system }) {
-  const anthropicMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+
+// Attach images (if any) to the last message only, in each provider's own
+// vision format. `images` is [] when there are none, so this is a no-op for
+// plain text turns and for every message except the newest one.
+function withImagesForClaude(messages, images) {
+  if (!images || images.length === 0) {
+    return messages.map((m) => ({ role: m.role, content: m.content }));
+  }
+  const lastIdx = messages.length - 1;
+  return messages.map((m, idx) => {
+    if (idx !== lastIdx || m.role !== "user") return { role: m.role, content: m.content };
+    return {
+      role: m.role,
+      content: [
+        ...images.map((img) => ({
+          type: "image",
+          source: { type: "base64", media_type: img.mediaType, data: img.data },
+        })),
+        { type: "text", text: m.content || "" },
+      ],
+    };
+  });
+}
+
+function withImagesForGemini(messages, images) {
+  const lastIdx = messages.length - 1;
+  return messages.map((m, idx) => {
+    const role = m.role === "assistant" ? "model" : "user";
+    if (idx === lastIdx && m.role === "user" && images && images.length > 0) {
+      return {
+        role,
+        parts: [
+          ...images.map((img) => ({ inlineData: { mimeType: img.mediaType, data: img.data } })),
+          { text: m.content || "" },
+        ],
+      };
+    }
+    return { role, parts: [{ text: m.content }] };
+  });
+}
+
+async function callClaude(env, messages, { stream, writer, system, images }) {
+  const anthropicMessages = withImagesForClaude(messages, images);
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -192,11 +289,8 @@ async function callClaude(env, messages, { stream, writer, system }) {
   return { text: full };
 }
 
-async function callGemini(env, messages, { stream, writer, system }) {
-  const contents = messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
+async function callGemini(env, messages, { stream, writer, system, images }) {
+  const contents = withImagesForGemini(messages, images);
 
   const method = stream ? "streamGenerateContent" : "generateContent";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_IDS.gemini}:${method}?key=${env.GEMINI_API_KEY}${stream ? "&alt=sse" : ""}`;
@@ -228,6 +322,10 @@ async function callGemini(env, messages, { stream, writer, system }) {
   return { text: full };
 }
 
+// Grok: text-only. This function is never called for a turn that has
+// images — the router removes "grok" from the provider order whenever
+// images are present (see runRouter below) — but it's written defensively
+// in case that ever changes.
 async function callGrok(env, messages, { stream, writer, system }) {
   const grokMessages = [
     ...(system ? [{ role: "system", content: system }] : []),
@@ -375,17 +473,33 @@ export default {
       return json({ error: "messages[] required" }, 400, headers);
     }
 
+    const imageCheck = validateImages(body.images);
+    if (!imageCheck.ok) {
+      return json({ error: imageCheck.error }, 400, headers);
+    }
+    const images = imageCheck.images;
+    const hasImages = images.length > 0;
+
     const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content || "";
-    const chosen = provider && PROVIDERS[provider] ? provider : autoRoute(lastUser);
-    const order = [chosen, ...DEFAULT_ORDER.filter((p) => p !== chosen)];
+    let chosen = provider && PROVIDERS[provider] ? provider : autoRoute(lastUser, hasImages);
+
+    // Grok has no verified vision support — reroute silently, whether Grok
+    // was auto-picked or explicitly chosen in the dropdown.
+    if (hasImages && chosen === "grok") chosen = "gemini";
+
+    let order = [chosen, ...DEFAULT_ORDER.filter((p) => p !== chosen)];
+    if (hasImages) order = order.filter((p) => p !== "grok");
+
+    const callOpts = { system: system || SYSTEM_PROMPT, images };
 
     // ---------------- non-streaming ----------------
     if (!stream) {
       try {
-        const result = await runWithFallback(env, messages, { stream: false, system: system || SYSTEM_PROMPT }, order);
+        const result = await runWithFallback(env, messages, { ...callOpts, stream: false }, order);
 
         if (sessionId && conversationId) {
-          const fullMessages = [...messages, { role: "assistant", content: result.text }];
+          const storedMessages = messagesForStorage(messages, images.length);
+          const fullMessages = [...storedMessages, { role: "assistant", content: result.text }];
           await saveConversation(env, sessionId, conversationId, fullMessages);
         }
 
@@ -404,13 +518,14 @@ export default {
       try {
         const providerUsed = order.find((name) => PROVIDERS[name]?.isConfigured(env));
         await writer.write(new TextEncoder().encode(`data: ${JSON.stringify({ providerUsed })}\n\n`));
-        const result = await runWithFallback(env, messages, { stream: true, writer, system: system || SYSTEM_PROMPT }, order);
+        const result = await runWithFallback(env, messages, { ...callOpts, stream: true, writer }, order);
         finalText = result?.text || "";
       } catch (err) {
         await writer.write(new TextEncoder().encode(`data: ${JSON.stringify({ error: err.message })}\n\n`));
       } finally {
         if (sessionId && conversationId && finalText) {
-          const fullMessages = [...messages, { role: "assistant", content: finalText }];
+          const storedMessages = messagesForStorage(messages, images.length);
+          const fullMessages = [...storedMessages, { role: "assistant", content: finalText }];
           await saveConversation(env, sessionId, conversationId, fullMessages);
         }
         await writer.write(new TextEncoder().encode("data: [DONE]\n\n"));

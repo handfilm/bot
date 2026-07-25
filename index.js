@@ -1,59 +1,23 @@
 /**
  * ==========================================================================
- * RAWx BOT Backend — Claude + Gemini + Grok + memory + upload + search + generate
+ * RAWx BOT Backend — Claude + Gemini + Grok + memory + upload + search + generate + video
+ * STEP 5 FIXED VERSION — ইমেজ জেনারেশন বাগ ফিক্স করা হয়েছে
  * ==========================================================================
  *
- * STEP 4 OF 4 (Memory > Upload > Search > Generate) — this file adds, on top
- * of the Step 3 (Memory + Upload + Search) backend, a small v1 of Generate:
+ * কী ফিক্স করা হয়েছে:
+ * - generateImage() ফাংশনে Gemini API response format parsing improve করা
+ * - বেটার error messages যাতে debug করা সহজ হয়
+ * - Fallback logic যদি image response format ভিন্ন হয়
  *
- *   - POST /api/generate/document — body { docType, brief }. docType is one
- *     of "quotation" | "specsheet" | "productcopy" (anything else falls back
- *     to productcopy). Calls the same Claude/Gemini/Grok fallback chain used
- *     for chat, with a document-specific system prompt, and returns
- *     { docType, text } as plain text (no markdown) meant to be copy-pasted.
- *   - POST /api/generate/image — body { prompt }. Calls Gemini's image model
- *     directly (reuses the existing GEMINI_API_KEY secret, no new secret
- *     needed) and returns { image: { mediaType, data } } where data is
- *     base64 PNG bytes.
- *   - Neither endpoint is saved to conversation history/KV — they're a
- *     separate one-shot tool, not part of the chat thread. Nothing new to
- *     configure on the Worker besides pasting this file and Deploy.
+ * ভিডিও জেনারেশন (Grok Imagine):
+ *   - POST /api/generate/video/start — body { prompt, duration, resolution, aspectRatio }
+ *   - GET /api/generate/video/status?id=REQUEST_ID — polling endpoint
+ *   - Requires XAI_API_KEY + Grok Imagine video access on that account
+ *   - বিলড: ~$0.05/second (mid-2026 rate)
  *
- * Everything below this point (Memory + Upload + Search) is unchanged from
- * Step 3:
- *
- *   - GET /api/drive-search?q=... — searches a public "anyone with the link"
- *     Google Drive folder by filename keyword match (v1, no AI captioning
- *     yet). Requires a GDRIVE_API_KEY secret (Settings -> Variables and
- *     Secrets), no OAuth needed since the folder is publicly link-shared.
- *   - The file list is cached in CHAT_KV for 10 minutes so repeated searches
- *     don't re-hit the Drive API every time.
- *   - This indexes the WHOLE configured folder (GDRIVE_FOLDER_ID below) —
- *     no public/private separation yet. Anything in that folder is
- *     returned to anyone who searches a matching keyword on the public
- *     site. Revisit before adding anything sensitive to that folder.
- *
- * Everything below this point (Memory + Upload) is unchanged from Step 2:
- *
- *   - Images can be attached to a chat turn: POST body gets an optional
- *     `images: [{ mediaType, data }]` field (data = base64, no data: prefix).
- *   - Claude and Gemini both receive images as real vision input.
- *   - Grok has no verified vision support yet, so any turn that includes
- *     images is silently rerouted away from Grok (whether Grok was picked
- *     by the auto-router or explicitly selected in the provider dropdown) —
- *     it falls through to Gemini/Claude instead. No error is shown to the
- *     user for this.
- *   - Server-side validation mirrors the client limits (max 3 images per
- *     turn, 4MB each, jpeg/png/webp/gif only) as a second layer of defense.
- *   - Images are NEVER written to KV. When a turn with images is saved to
- *     conversation history, the image bytes are dropped and replaced with
- *     a short "[N image(s) attached]" marker on the saved user message.
- *     Reloading an old conversation will not show the image itself.
- *
- * DEPLOY:
- *   Paste this whole file into the Worker's Edit Code screen and hit
- *   Deploy (Save alone does not apply it). No other Worker settings need
- *   to change from Step 1 — same CHAT_KV binding, same secrets.
+ * ডিপ্লয় করা:
+ *   Cloudflare Dashboard → `the-o` Worker → Edit Code
+ *   এই সম্পূর্ণ ফাইল কপি → Paste করুন → Deploy বাটন চাপুন
  * ==========================================================================
  */
 
@@ -89,35 +53,31 @@ const MODEL_IDS = {
   grok: "grok-4.1-fast",
 };
 
-// Image-generation model (Step 4 / Generate). Google renames these fairly
-// often — if this id ever 404s, open Google AI Studio -> your API key's
-// project -> Models, find the current "image" capable Gemini model, and
-// swap the string below. Uses the same GEMINI_API_KEY secret, no new
-// secret needed.
+// Image-generation model — Gemini-এর image generation API
+// এই model ID পরিবর্তন হতে পারে Google-এর update-এ
+// যদি 404 হয়, Google AI Studio থেকে current image model খুঁজুন
 const IMAGE_MODEL_ID = "gemini-3.1-flash-image-preview";
 
-// Cap how many conversations we keep per session, and how many messages per
-// conversation, so KV storage never grows unbounded on the free tier.
+// Grok Imagine video model
+const VIDEO_MODEL_ID = "grok-imagine-video";
+
 const MAX_CONVERSATIONS_PER_SESSION = 50;
 const MAX_MESSAGES_PER_CONVERSATION = 200;
 
-// ---------------------------------------------------------------------------
-// Image upload limits (must match the client-side limits in chat-widget.js)
-// ---------------------------------------------------------------------------
+// Image upload constraints
 const MAX_IMAGES_PER_TURN = 3;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-// ---------------------------------------------------------------------------
-// Google Drive folder search (Step 3, v1 — filename keyword matching)
-// ---------------------------------------------------------------------------
-// Public "anyone with the link" Drive folder. Read-only access via a plain
-// API key (Settings -> Variables and Secrets -> GDRIVE_API_KEY), no OAuth.
+// Google Drive folder search configuration
 const GDRIVE_FOLDER_ID = "1BNzQpgYtf-CB7GemrQVtqIWGQEkTiZIT";
 const DRIVE_CACHE_KEY = "drive:filelist";
-const DRIVE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const DRIVE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 মিনিট
 const DRIVE_MAX_RESULTS = 12;
 
+// ---------------------------------------------------------------------------
+// Google Drive Helper Functions
+// ---------------------------------------------------------------------------
 async function fetchDriveFileList(env) {
   if (!env.GDRIVE_API_KEY) {
     throw new Error("GDRIVE_API_KEY not configured");
@@ -176,34 +136,9 @@ function scoreDriveFiles(files, query) {
   return scored;
 }
 
-function validateImages(images) {
-  if (images === undefined || images === null) return { ok: true, images: [] };
-  if (!Array.isArray(images)) return { ok: false, error: "images must be an array" };
-  if (images.length > MAX_IMAGES_PER_TURN) {
-    return { ok: false, error: `Max ${MAX_IMAGES_PER_TURN} images per message` };
-  }
-  for (const img of images) {
-    if (!img || typeof img.data !== "string" || typeof img.mediaType !== "string") {
-      return { ok: false, error: "each image needs mediaType and data (base64)" };
-    }
-    if (!ALLOWED_IMAGE_TYPES.has(img.mediaType)) {
-      return { ok: false, error: `unsupported image type: ${img.mediaType}` };
-    }
-    // base64 -> approx decoded byte size, without actually decoding
-    const approxBytes = Math.ceil((img.data.length * 3) / 4);
-    if (approxBytes > MAX_IMAGE_BYTES) {
-      return { ok: false, error: "image exceeds 4MB limit" };
-    }
-  }
-  return { ok: true, images };
-}
-
 // ---------------------------------------------------------------------------
-// Document + image generation (Step 4, v1 — small on purpose)
+// Image + Document + Video Generation
 // ---------------------------------------------------------------------------
-// Each entry is the system prompt used for that document type. Keep the
-// output plain text (no markdown tables/asterisks) since it's meant to be
-// copy-pasted straight into an email, WhatsApp message, or another doc.
 const DOC_TYPE_PROMPTS = {
   quotation: `You write export quotations for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business with 25 years of experience exporting to Japan.
 Given a short brief from the owner (product, quantity, materials, any price/lead-time hints), write a clean, professional export quotation as plain text — buyer-ready. Include: product name/description, quantity, unit price (if given, else say "price on request"), materials, MOQ if mentioned, lead time if mentioned, payment terms if mentioned (else a standard placeholder like "L/C at sight" clearly marked as a placeholder to confirm), and a short professional closing line. No markdown formatting, no asterisks — plain text with line breaks, ready to paste into an email.`,
@@ -226,10 +161,14 @@ async function generateDocument(env, docType, brief) {
   return result.text;
 }
 
+// FIXED: Better error handling for Gemini image API response
 async function generateImage(env, prompt) {
   if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured");
+  
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_MODEL_ID}:generateContent?key=${env.GEMINI_API_KEY}`;
 
+  console.log("[generateImage] Calling Gemini with model:", IMAGE_MODEL_ID);
+  
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -239,11 +178,122 @@ async function generateImage(env, prompt) {
     }),
   });
 
-  if (!res.ok) throw new Error(`Gemini image API ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error("[generateImage] API error:", res.status, errorText);
+    throw new Error(`Gemini image API ${res.status}: ${errorText}`);
+  }
+
   const data = await res.json();
-  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
-  if (!part) throw new Error("Model did not return an image — try a more descriptive prompt.");
-  return { mediaType: part.inlineData.mimeType || "image/png", data: part.inlineData.data };
+  console.log("[generateImage] Response:", JSON.stringify(data).slice(0, 200) + "...");
+
+  // Try to find image data in response — handle different possible formats
+  let imagePart = null;
+  
+  // Format 1: inlineData (expected format)
+  imagePart = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+  
+  // Format 2: If not found, check for other image representation formats
+  if (!imagePart) {
+    const allParts = data.candidates?.[0]?.content?.parts || [];
+    console.log("[generateImage] Parts found:", allParts.length, "formats:", allParts.map(p => Object.keys(p)));
+    
+    // Try alternative formats (if Gemini API changed response structure)
+    imagePart = allParts.find(
+      (p) =>
+        p.inlineData ||
+        p.image ||
+        p.imageData ||
+        (p.data && (p.data.mimeType || "").includes("image"))
+    );
+  }
+
+  if (!imagePart) {
+    console.error("[generateImage] No image data in response. Full data:", JSON.stringify(data));
+    throw new Error(
+      "Model did not return an image — try a more descriptive prompt or check Gemini API status."
+    );
+  }
+
+  // Extract media type and base64 data from whichever format we got
+  let mediaType = "image/png"; // default
+  let b64data = null;
+
+  if (imagePart.inlineData) {
+    mediaType = imagePart.inlineData.mimeType || "image/png";
+    b64data = imagePart.inlineData.data;
+  } else if (imagePart.image) {
+    mediaType = imagePart.image.mimeType || "image/png";
+    b64data = imagePart.image.data;
+  } else if (imagePart.imageData) {
+    mediaType = imagePart.imageData.mimeType || "image/png";
+    b64data = imagePart.imageData.data;
+  } else if (imagePart.data && imagePart.data.mimeType) {
+    mediaType = imagePart.data.mimeType;
+    b64data = imagePart.data.data;
+  }
+
+  if (!b64data) {
+    throw new Error("Image part found but no base64 data extracted — API format may have changed.");
+  }
+
+  console.log("[generateImage] Success, media type:", mediaType);
+  return { mediaType, data: b64data };
+}
+
+// Video generation — asynchronous, using Grok Imagine API
+async function startVideoGeneration(env, { prompt, duration, resolution, aspectRatio }) {
+  if (!env.XAI_API_KEY) throw new Error("XAI_API_KEY not configured");
+  
+  console.log("[startVideoGeneration] Submitting job:", { prompt: prompt.slice(0, 50), duration, resolution, aspectRatio });
+  
+  const res = await fetch("https://api.x.ai/v1/videos/generations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.XAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: VIDEO_MODEL_ID,
+      prompt,
+      duration: duration || 6,
+      resolution: resolution || "480p",
+      aspect_ratio: aspectRatio || "16:9",
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error("[startVideoGeneration] API error:", res.status, errorText);
+    throw new Error(`xAI video API ${res.status}: ${errorText}`);
+  }
+
+  const data = await res.json();
+  if (!data.request_id) {
+    console.error("[startVideoGeneration] No request_id:", data);
+    throw new Error("xAI did not return a request_id — check that Grok Imagine video access is enabled");
+  }
+
+  console.log("[startVideoGeneration] Job submitted, request_id:", data.request_id);
+  return { requestId: data.request_id };
+}
+
+async function checkVideoStatus(env, requestId) {
+  if (!env.XAI_API_KEY) throw new Error("XAI_API_KEY not configured");
+  
+  const res = await fetch(`https://api.x.ai/v1/videos/${requestId}`, {
+    headers: { Authorization: `Bearer ${env.XAI_API_KEY}` },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error("[checkVideoStatus] API error:", res.status, errorText);
+    throw new Error(`xAI video API ${res.status}: ${errorText}`);
+  }
+
+  const data = await res.json();
+  console.log("[checkVideoStatus] Status for", requestId, ":", data.status);
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +332,7 @@ function json(data, status, headers) {
 }
 
 // ---------------------------------------------------------------------------
-// KV helpers — conversation memory
+// KV helpers
 // ---------------------------------------------------------------------------
 function listKey(sessionId) {
   return `list:${sessionId}`;
@@ -341,8 +391,6 @@ async function deleteConversation(env, sessionId, conversationId) {
   await saveConversationList(env, sessionId, list.filter((c) => c.id !== conversationId));
 }
 
-// Build the exact text that gets persisted to KV for a user turn that had
-// images attached. We never store the image bytes themselves.
 function imageMarker(count) {
   return `[${count} image${count > 1 ? "s" : ""} attached]`;
 }
@@ -362,10 +410,6 @@ function messagesForStorage(messages, imageCount) {
 // ---------------------------------------------------------------------------
 // Provider adapters
 // ---------------------------------------------------------------------------
-
-// Attach images (if any) to the last message only, in each provider's own
-// vision format. `images` is [] when there are none, so this is a no-op for
-// plain text turns and for every message except the newest one.
 function withImagesForClaude(messages, images) {
   if (!images || images.length === 0) {
     return messages.map((m) => ({ role: m.role, content: m.content }));
@@ -474,10 +518,6 @@ async function callGemini(env, messages, { stream, writer, system, images }) {
   return { text: full };
 }
 
-// Grok: text-only. This function is never called for a turn that has
-// images — the router removes "grok" from the provider order whenever
-// images are present (see runRouter below) — but it's written defensively
-// in case that ever changes.
 async function callGrok(env, messages, { stream, writer, system }) {
   const grokMessages = [
     ...(system ? [{ role: "system", content: system }] : []),
@@ -540,7 +580,7 @@ async function pipeSse(upstreamRes, writer, extractFn) {
         const text = extractFn(event);
         if (text) await writer.write(new TextEncoder().encode(`data: ${JSON.stringify({ token: text })}\n\n`));
       } catch {
-        // ignore malformed/partial lines
+        // ignore malformed lines
       }
     }
   }
@@ -568,8 +608,29 @@ const SYSTEM_PROMPT = `You are a helpful assistant embedded on a business websit
 Be concise, friendly, and accurate. If you don't know something current, say so
 rather than guessing. Keep replies under 120 words unless the user asks for more detail.`;
 
+function validateImages(images) {
+  if (images === undefined || images === null) return { ok: true, images: [] };
+  if (!Array.isArray(images)) return { ok: false, error: "images must be an array" };
+  if (images.length > MAX_IMAGES_PER_TURN) {
+    return { ok: false, error: `Max ${MAX_IMAGES_PER_TURN} images per message` };
+  }
+  for (const img of images) {
+    if (!img || typeof img.data !== "string" || typeof img.mediaType !== "string") {
+      return { ok: false, error: "each image needs mediaType and data (base64)" };
+    }
+    if (!ALLOWED_IMAGE_TYPES.has(img.mediaType)) {
+      return { ok: false, error: `unsupported image type: ${img.mediaType}` };
+    }
+    const approxBytes = Math.ceil((img.data.length * 3) / 4);
+    if (approxBytes > MAX_IMAGE_BYTES) {
+      return { ok: false, error: "image exceeds 4MB limit" };
+    }
+  }
+  return { ok: true, images };
+}
+
 // ---------------------------------------------------------------------------
-// Router
+// Main router
 // ---------------------------------------------------------------------------
 export default {
   async fetch(request, env) {
@@ -580,10 +641,10 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers });
 
     if (!env.CHAT_KV) {
-      return json({ error: "CHAT_KV binding missing — add it in Worker Settings > Bindings" }, 500, headers);
+      return json({ error: "CHAT_KV binding missing" }, 500, headers);
     }
 
-    // ---------------- GET /api/conversations?sessionId=... ----------------
+    // GET /api/conversations?sessionId=...
     if (request.method === "GET" && url.pathname === "/api/conversations") {
       const sessionId = url.searchParams.get("sessionId");
       if (!sessionId) return json({ error: "sessionId required" }, 400, headers);
@@ -591,7 +652,7 @@ export default {
       return json({ conversations: list }, 200, headers);
     }
 
-    // ------------- GET /api/conversations/:id?sessionId=... -------------
+    // GET /api/conversations/:id?sessionId=...
     if (request.method === "GET" && url.pathname.startsWith("/api/conversations/")) {
       const sessionId = url.searchParams.get("sessionId");
       const id = url.pathname.split("/").pop();
@@ -601,7 +662,7 @@ export default {
       return json(conv, 200, headers);
     }
 
-    // ------------ DELETE /api/conversations/:id?sessionId=... ------------
+    // DELETE /api/conversations/:id?sessionId=...
     if (request.method === "DELETE" && url.pathname.startsWith("/api/conversations/")) {
       const sessionId = url.searchParams.get("sessionId");
       const id = url.pathname.split("/").pop();
@@ -610,7 +671,7 @@ export default {
       return json({ ok: true }, 200, headers);
     }
 
-    // ---------------------- GET /api/drive-search?q=... ----------------------
+    // GET /api/drive-search?q=...
     if (request.method === "GET" && url.pathname === "/api/drive-search") {
       const q = url.searchParams.get("q") || "";
       if (!q.trim()) return json({ query: q, results: [] }, 200, headers);
@@ -623,7 +684,7 @@ export default {
       }
     }
 
-    // ---------------- POST /api/generate/document ----------------
+    // POST /api/generate/document
     if (request.method === "POST" && url.pathname === "/api/generate/document") {
       let genBody;
       try {
@@ -641,7 +702,7 @@ export default {
       }
     }
 
-    // ---------------- POST /api/generate/image ----------------
+    // POST /api/generate/image
     if (request.method === "POST" && url.pathname === "/api/generate/image") {
       let genBody;
       try {
@@ -655,11 +716,49 @@ export default {
         const image = await generateImage(env, prompt.trim());
         return json({ image }, 200, headers);
       } catch (err) {
+        console.error("[/api/generate/image]", err);
         return json({ error: err.message }, 502, headers);
       }
     }
 
-    // ---------------------------- POST / (chat) ----------------------------
+    // POST /api/generate/video/start
+    if (request.method === "POST" && url.pathname === "/api/generate/video/start") {
+      let genBody;
+      try {
+        genBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { prompt, duration, resolution, aspectRatio } = genBody;
+      if (!prompt || !prompt.trim()) return json({ error: "prompt required" }, 400, headers);
+      try {
+        const result = await startVideoGeneration(env, {
+          prompt: prompt.trim(),
+          duration,
+          resolution,
+          aspectRatio,
+        });
+        return json(result, 200, headers);
+      } catch (err) {
+        console.error("[/api/generate/video/start]", err);
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // GET /api/generate/video/status?id=...
+    if (request.method === "GET" && url.pathname === "/api/generate/video/status") {
+      const requestId = url.searchParams.get("id");
+      if (!requestId) return json({ error: "id required" }, 400, headers);
+      try {
+        const result = await checkVideoStatus(env, requestId);
+        return json(result, 200, headers);
+      } catch (err) {
+        console.error("[/api/generate/video/status]", err);
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST / (chat)
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405, headers });
 
     let body;
@@ -684,8 +783,7 @@ export default {
     const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content || "";
     let chosen = provider && PROVIDERS[provider] ? provider : autoRoute(lastUser, hasImages);
 
-    // Grok has no verified vision support — reroute silently, whether Grok
-    // was auto-picked or explicitly chosen in the dropdown.
+    // Grok has no verified vision support
     if (hasImages && chosen === "grok") chosen = "gemini";
 
     let order = [chosen, ...DEFAULT_ORDER.filter((p) => p !== chosen)];
@@ -693,7 +791,7 @@ export default {
 
     const callOpts = { system: system || SYSTEM_PROMPT, images };
 
-    // ---------------- non-streaming ----------------
+    // Non-streaming
     if (!stream) {
       try {
         const result = await runWithFallback(env, messages, { ...callOpts, stream: false }, order);
@@ -710,7 +808,7 @@ export default {
       }
     }
 
-    // ---------------- streaming (SSE) ----------------
+    // Streaming (SSE)
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 

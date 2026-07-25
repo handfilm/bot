@@ -1,15 +1,44 @@
 /**
  * ==========================================================================
- * RAWx BOT Chat Widget — Step 4: memory + upload + Drive search + generate
+ * RAWx BOT Chat Widget — Step 6: personalities + export + voice chat
+ * ==========================================================================
+ * New in this version (Phase 1 "wow factor" features, on top of Step 4):
+ *   - Bot Personality: a dropdown next to the provider select ("Default",
+ *     "Professional", "Friendly", "Product Expert", "Fun"). Picking one just
+ *     sends a different `system` prompt on each request — the backend
+ *     already supports this (POST body `system` field overrides its
+ *     default), so NO backend changes were needed for this feature.
+ *     Selection persists in localStorage across reloads.
+ *   - Conversation Export: a 💾 button next to Generate opens a small menu
+ *     with three options — Markdown (.md), JSON (.json), and Print/Save as
+ *     PDF (opens a clean printable window and triggers the browser's print
+ *     dialog, so no PDF library/CDN dependency is needed). All three run
+ *     entirely client-side from the in-memory `history` array — no backend
+ *     endpoint involved.
+ *   - Voice Chat: a 🎤 button next to the text input uses the browser's
+ *     native SpeechRecognition API to transcribe speech into the input box
+ *     (tap the EN/বাং button first to pick the recognition language). A
+ *     🔈/🔊 header button toggles auto-read-aloud of assistant replies using
+ *     the browser's native SpeechSynthesis API, and every assistant bubble
+ *     also gets its own small 🔊 replay button. Both APIs are 100% free and
+ *     built into the browser — no Google Cloud STT/TTS, no API key, no
+ *     per-minute cost. Trade-off: browser support varies (best in Chrome;
+ *     Bengali recognition quality depends on the device/OS voice packs) —
+ *     the mic button quietly disables itself with an alert if the browser
+ *     doesn't support it, so nothing breaks on unsupported browsers.
  * ==========================================================================
  * New in this version (on top of Step 3):
- *   - A ✨ button next to Search opens a Generate panel with two tabs:
+ *   - A ✨ button next to Search opens a Generate panel with three tabs:
  *     "Document" (pick Quotation / Spec Sheet / Product Copy, type a short
- *     brief, get back plain-text copy with a Copy button) and "Image"
- *     (type a prompt, get back a generated image with a Download link).
- *   - Both call one-shot Worker endpoints (/api/generate/document,
- *     /api/generate/image) — not part of the chat thread, nothing saved
- *     to conversation history.
+ *     brief, get back plain-text copy with a Copy button), "Image" (type a
+ *     prompt, get back a generated image with a Download link), and "Video"
+ *     (Grok Imagine — type a prompt, pick a duration, wait while it polls,
+ *     get back a playable video). Video is billed per second by xAI and
+ *     needs Imagine video access on that API key/account, separate from a
+ *     SuperGrok consumer subscription.
+ *   - All three call one-shot Worker endpoints (/api/generate/document,
+ *     /api/generate/image, /api/generate/video/start + /status) — not part
+ *     of the chat thread, nothing saved to conversation history.
  * ==========================================================================
  * New in this version (on top of Step 2):
  *   - A 🔍 button next to History/New chat opens a search panel.
@@ -49,6 +78,41 @@
   const MAX_IMAGES = 3;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+  // ---------------------------------------------------------------------
+  // Bot personalities — just alternate `system` prompts. The backend already
+  // uses `system: system || SYSTEM_PROMPT` from the request body, so picking
+  // a personality here is a pure frontend change, no Worker redeploy needed.
+  // ---------------------------------------------------------------------
+  const PERSONALITIES = {
+    professional: {
+      label: "Professional",
+      prompt:
+        "You are a formal, professional business assistant for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business with 25 years of experience exporting to Japan. Be concise, precise, and businesslike — suited for client-facing quotations and formal correspondence. Keep replies under 120 words unless the user asks for more detail.",
+    },
+    friendly: {
+      label: "Friendly",
+      prompt:
+        "You are a warm, friendly, conversational assistant for HANDS & HEAD Group / RAWx. Chat casually and helpfully, like a knowledgeable friend. Keep replies under 120 words unless the user asks for more detail.",
+    },
+    expert: {
+      label: "Product Expert",
+      prompt:
+        "You are a technical product expert for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business. Give detailed, technical, spec-accurate answers about materials, construction, and manufacturing. Stay accurate — use a placeholder in [brackets] rather than inventing a fact you don't have.",
+    },
+    fun: {
+      label: "Fun",
+      prompt:
+        "You are an upbeat, fun, casual assistant for HANDS & HEAD Group / RAWx — enthusiastic startup energy, light humor, emojis welcome. Still be accurate and helpful. Keep replies under 120 words unless the user asks for more detail.",
+    },
+  };
+  const PERSONALITY_KEY = "mab_personality";
+
+  // Voice chat settings
+  const VOICE_LANG_KEY = "mab_voice_lang";
+  const AUTO_SPEAK_KEY = "mab_auto_speak";
+  const VOICE_LANGS = ["en-US", "bn-BD"];
+  const VOICE_LANG_LABELS = { "en-US": "EN", "bn-BD": "বাং" };
 
   function getOrCreateSessionId() {
     let id = localStorage.getItem(SESSION_KEY);
@@ -177,6 +241,44 @@
   .mab-gen-img-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
   .mab-gen-img-result img{ max-width:100%; border-radius:8px; border:1px solid #eee; }
   .mab-gen-img-result a{ font-size:0.78rem; color:#1a1a1a; }
+  .mab-gen-vid-note{ font-size:0.68rem; color:#999; }
+  .mab-gen-vid-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .mab-gen-vid-result video{ max-width:100%; border-radius:8px; border:1px solid #eee; }
+  .mab-gen-vid-result a{ font-size:0.78rem; color:#1a1a1a; }
+
+  .mab-head select.mab-personality{ max-width:88px; }
+  .mab-export-wrap{ position:relative; display:inline-flex; }
+  .mab-export-menu{
+    position:absolute; top:30px; left:0; background:#fff; border:1px solid #ddd; border-radius:8px;
+    box-shadow:0 10px 28px rgba(0,0,0,.25); display:none; flex-direction:column; z-index:10000;
+    overflow:hidden; min-width:170px;
+  }
+  .mab-export-menu.open{ display:flex; }
+  .mab-export-menu button{
+    background:none; border:none; text-align:left; padding:9px 14px; font-size:0.78rem; cursor:pointer;
+    color:#222; font-family:inherit; white-space:nowrap;
+  }
+  .mab-export-menu button:hover{ background:#f2f2f2; }
+  .mab-export-menu button:disabled{ opacity:0.45; cursor:default; }
+
+  .mab-speak-toggle.on{ color:#4caf50; }
+  .mab-voice-lang-btn{
+    background:none; border:1px solid #ccc; border-radius:6px; cursor:pointer; font-size:0.66rem;
+    padding:3px 6px; color:#555; flex-shrink:0; margin-right:2px; font-family:inherit;
+  }
+  .mab-voice-lang-btn:hover{ border-color:#999; }
+  .mab-mic-btn{
+    background:none; border:none; cursor:pointer; font-size:1rem; padding:0 8px; color:#555; flex-shrink:0;
+  }
+  .mab-mic-btn:hover{ color:#111; }
+  .mab-mic-btn.listening{ color:#c81d11; animation: mab-pulse 1s infinite; }
+  @keyframes mab-pulse{ 0%{ opacity:1; } 50%{ opacity:0.35; } 100%{ opacity:1; } }
+
+  .mab-speak-btn{
+    display:inline-block; background:none; border:none; cursor:pointer; font-size:0.72rem;
+    margin-left:6px; opacity:0.55; vertical-align:middle; padding:0;
+  }
+  .mab-speak-btn:hover{ opacity:1; }
   `;
 
   function injectStyle() {
@@ -200,10 +302,26 @@
           <button type="button" class="mab-icon-btn mab-history-toggle" aria-label="History" title="History">&#9776;</button>
           <button type="button" class="mab-icon-btn mab-search-toggle" aria-label="Search" title="Search">&#128269;</button>
           <button type="button" class="mab-icon-btn mab-generate-toggle" aria-label="Generate" title="Generate">&#10024;</button>
+          <span class="mab-export-wrap">
+            <button type="button" class="mab-icon-btn mab-export-toggle" aria-label="Export conversation" title="Export conversation">&#128190;</button>
+            <div class="mab-export-menu">
+              <button type="button" class="mab-export-md">Export as Markdown (.md)</button>
+              <button type="button" class="mab-export-json">Export as JSON (.json)</button>
+              <button type="button" class="mab-export-pdf">Print / Save as PDF</button>
+            </div>
+          </span>
+          <button type="button" class="mab-icon-btn mab-speak-toggle" aria-label="Auto-read replies aloud" title="Auto-read replies aloud">&#128264;</button>
           <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
         </div>
         <span class="mab-head-title">Ask us anything</span>
         <div class="mab-head-actions">
+          <select class="mab-personality" title="Bot personality">
+            <option value="">Default</option>
+            <option value="professional">Professional</option>
+            <option value="friendly">Friendly</option>
+            <option value="expert">Product Expert</option>
+            <option value="fun">Fun</option>
+          </select>
           <select class="mab-provider">
             <option value="">Auto</option>
             <option value="claude">Claude</option>
@@ -229,6 +347,7 @@
           <div class="mab-gen-tabs">
             <button type="button" class="mab-gen-tab active" data-tab="document">Document</button>
             <button type="button" class="mab-gen-tab" data-tab="image">Image</button>
+            <button type="button" class="mab-gen-tab" data-tab="video">Video</button>
           </div>
           <div class="mab-gen-view mab-gen-doc">
             <select class="mab-gen-doctype">
@@ -250,6 +369,19 @@
             <div class="mab-gen-img-status"></div>
             <div class="mab-gen-img-result"></div>
           </div>
+          <div class="mab-gen-view mab-gen-vid" style="display:none;">
+            <textarea class="mab-gen-vid-prompt" rows="3" placeholder="Describe the video — e.g. 'slow pan across a rack of leather jackets in a bright showroom'"></textarea>
+            <select class="mab-gen-vid-duration">
+              <option value="5">5 seconds</option>
+              <option value="6" selected>6 seconds</option>
+              <option value="8">8 seconds</option>
+              <option value="10">10 seconds</option>
+            </select>
+            <div class="mab-gen-vid-note">Billed per second by xAI (~$0.05/sec) — keep it short while testing.</div>
+            <button type="button" class="mab-gen-vid-btn">Generate</button>
+            <div class="mab-gen-vid-status"></div>
+            <div class="mab-gen-vid-result"></div>
+          </div>
         </div>
         <div class="mab-messages"></div>
       </div>
@@ -258,6 +390,8 @@
       <form class="mab-form">
         <button type="button" class="mab-attach-btn" aria-label="Attach image" title="Attach image">&#128206;</button>
         <input type="file" class="mab-file-input" accept="image/jpeg,image/png,image/webp,image/gif" multiple style="display:none">
+        <button type="button" class="mab-voice-lang-btn" title="Voice language (tap to switch)">EN</button>
+        <button type="button" class="mab-mic-btn" aria-label="Voice input" title="Speak your message">&#127908;</button>
         <input type="text" placeholder="Type a message..." required>
         <button type="submit">Send</button>
       </form>
@@ -282,9 +416,42 @@
       html += `<span class="mab-img-tag"> 📎 ${imageCount} image${imageCount > 1 ? "s" : ""}</span>`;
     }
     div.innerHTML = html;
+    if (role === "assistant" && text) {
+      addSpeakButton(div, text);
+    }
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     return div;
+  }
+
+  // Reads text aloud with the browser's native SpeechSynthesis API (free,
+  // no API key). Silently no-ops if the browser doesn't support it.
+  function speak(text) {
+    if (!("speechSynthesis" in window) || !text) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = localStorage.getItem(VOICE_LANG_KEY) || "en-US";
+      window.speechSynthesis.speak(utter);
+    } catch (err) {
+      console.warn("[rawx-bot-widget] speak failed", err);
+    }
+  }
+
+  // Adds a small 🔊 replay button to an assistant bubble, if TTS is supported.
+  function addSpeakButton(bubbleEl, text) {
+    if (!("speechSynthesis" in window)) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mab-speak-btn";
+    btn.setAttribute("aria-label", "Read aloud");
+    btn.title = "Read aloud";
+    btn.textContent = "🔊";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      speak(text);
+    });
+    bubbleEl.appendChild(btn);
   }
 
   function escapeHtml(str) {
@@ -348,19 +515,203 @@
     const genImgBtn = panel.querySelector(".mab-gen-img-btn");
     const genImgStatus = panel.querySelector(".mab-gen-img-status");
     const genImgResult = panel.querySelector(".mab-gen-img-result");
+    const genVidView = panel.querySelector(".mab-gen-vid");
+    const genVidPrompt = panel.querySelector(".mab-gen-vid-prompt");
+    const genVidDuration = panel.querySelector(".mab-gen-vid-duration");
+    const genVidBtn = panel.querySelector(".mab-gen-vid-btn");
+    const genVidStatus = panel.querySelector(".mab-gen-vid-status");
+    const genVidResult = panel.querySelector(".mab-gen-vid-result");
     const newChatBtn = panel.querySelector(".mab-new-chat");
     const sidebarNewBtn = panel.querySelector(".mab-sidebar-new");
     const form = panel.querySelector(".mab-form");
     const input = form.querySelector("input[type='text']");
     const providerSelect = panel.querySelector(".mab-provider");
+    const personalitySelect = panel.querySelector(".mab-personality");
     const attachBtn = panel.querySelector(".mab-attach-btn");
     const fileInput = panel.querySelector(".mab-file-input");
     const previewEl = panel.querySelector(".mab-attach-preview");
     const attachErrorEl = panel.querySelector(".mab-attach-error");
+    const exportToggle = panel.querySelector(".mab-export-toggle");
+    const exportMenu = panel.querySelector(".mab-export-menu");
+    const exportMdBtn = panel.querySelector(".mab-export-md");
+    const exportJsonBtn = panel.querySelector(".mab-export-json");
+    const exportPdfBtn = panel.querySelector(".mab-export-pdf");
+    const speakToggle = panel.querySelector(".mab-speak-toggle");
+    const voiceLangBtn = panel.querySelector(".mab-voice-lang-btn");
+    const micBtn = panel.querySelector(".mab-mic-btn");
 
     let history = [];
     let conversationId = localStorage.getItem(ACTIVE_CONV_KEY) || null;
     let pendingImages = []; // { mediaType, data, previewUrl, name }
+
+    // ---- Bot personality: restore saved choice, persist on change ----
+    personalitySelect.value = localStorage.getItem(PERSONALITY_KEY) || "";
+    personalitySelect.addEventListener("change", () => {
+      localStorage.setItem(PERSONALITY_KEY, personalitySelect.value);
+    });
+    function getPersonalitySystemPrompt() {
+      const key = personalitySelect.value;
+      return key && PERSONALITIES[key] ? PERSONALITIES[key].prompt : undefined;
+    }
+
+    // ---- Conversation export ----
+    function conversationToMarkdown() {
+      const lines = [`# RAWx Bot Conversation`, `_Exported ${new Date().toLocaleString()}_`, ""];
+      history.forEach((m) => {
+        lines.push(m.role === "user" ? "**You:**" : "**RAWx Bot:**", m.content, "");
+      });
+      return lines.join("\n");
+    }
+
+    function downloadBlob(filename, content, mime) {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+
+    function closeExportMenu() {
+      exportMenu.classList.remove("open");
+    }
+
+    exportToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      exportMenu.classList.toggle("open");
+    });
+    document.addEventListener("click", (e) => {
+      if (!exportMenu.contains(e.target) && e.target !== exportToggle) closeExportMenu();
+    });
+
+    exportMdBtn.addEventListener("click", () => {
+      closeExportMenu();
+      if (history.length === 0) return;
+      downloadBlob(`rawx-chat-${Date.now()}.md`, conversationToMarkdown(), "text/markdown");
+    });
+
+    exportJsonBtn.addEventListener("click", () => {
+      closeExportMenu();
+      if (history.length === 0) return;
+      downloadBlob(
+        `rawx-chat-${Date.now()}.json`,
+        JSON.stringify({ exportedAt: new Date().toISOString(), messages: history }, null, 2),
+        "application/json"
+      );
+    });
+
+    exportPdfBtn.addEventListener("click", () => {
+      closeExportMenu();
+      if (history.length === 0) return;
+      const w = window.open("", "_blank");
+      if (!w) {
+        alert("Please allow pop-ups for this site to export as PDF.");
+        return;
+      }
+      const rows = history
+        .map(
+          (m) =>
+            `<div style="margin-bottom:14px;"><strong>${m.role === "user" ? "You" : "RAWx Bot"}:</strong>` +
+            `<div style="white-space:pre-wrap;margin-top:2px;">${escapeHtml(m.content)}</div></div>`
+        )
+        .join("");
+      w.document.write(
+        `<html><head><title>RAWx Bot Conversation</title><meta charset="utf-8">` +
+          `<style>body{font-family:system-ui,sans-serif;padding:24px;max-width:700px;margin:0 auto;color:#111;}` +
+          `h1{font-size:1.15rem;} .mab-print-meta{color:#888;font-size:0.78rem;margin-bottom:16px;}</style>` +
+          `</head><body><h1>RAWx Bot Conversation</h1>` +
+          `<div class="mab-print-meta">Exported ${new Date().toLocaleString()}</div>${rows}</body></html>`
+      );
+      w.document.close();
+      w.focus();
+      setTimeout(() => w.print(), 300);
+    });
+
+    // ---- Voice chat: text-to-speech (auto-read toggle) ----
+    let autoSpeak = localStorage.getItem(AUTO_SPEAK_KEY) === "1";
+    function renderSpeakToggle() {
+      speakToggle.classList.toggle("on", autoSpeak);
+      speakToggle.innerHTML = autoSpeak ? "&#128266;" : "&#128264;";
+    }
+    renderSpeakToggle();
+    speakToggle.addEventListener("click", () => {
+      autoSpeak = !autoSpeak;
+      localStorage.setItem(AUTO_SPEAK_KEY, autoSpeak ? "1" : "0");
+      renderSpeakToggle();
+      if (!autoSpeak && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    });
+
+    // ---- Voice chat: language toggle (used by both mic input and TTS) ----
+    function currentVoiceLang() {
+      return localStorage.getItem(VOICE_LANG_KEY) || VOICE_LANGS[0];
+    }
+    function renderVoiceLangBtn() {
+      voiceLangBtn.textContent = VOICE_LANG_LABELS[currentVoiceLang()] || "EN";
+    }
+    renderVoiceLangBtn();
+    voiceLangBtn.addEventListener("click", () => {
+      const idx = VOICE_LANGS.indexOf(currentVoiceLang());
+      const next = VOICE_LANGS[(idx + 1) % VOICE_LANGS.length];
+      localStorage.setItem(VOICE_LANG_KEY, next);
+      renderVoiceLangBtn();
+      if (recognition) recognition.lang = next;
+    });
+
+    // ---- Voice chat: speech-to-text (mic button) ----
+    // Uses the browser's native SpeechRecognition API — free, no backend
+    // change, no API key. Support varies by browser (best in Chrome); the
+    // button disables itself gracefully where it isn't available.
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let recognizing = false;
+    if (SpeechRecognitionCtor) {
+      recognition = new SpeechRecognitionCtor();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = currentVoiceLang();
+      recognition.addEventListener("start", () => {
+        recognizing = true;
+        micBtn.classList.add("listening");
+      });
+      recognition.addEventListener("end", () => {
+        recognizing = false;
+        micBtn.classList.remove("listening");
+      });
+      recognition.addEventListener("result", (e) => {
+        const transcript = e.results[0][0].transcript;
+        input.value = transcript;
+        input.focus();
+      });
+      recognition.addEventListener("error", (e) => {
+        recognizing = false;
+        micBtn.classList.remove("listening");
+        if (e.error !== "no-speech" && e.error !== "aborted") {
+          console.warn("[rawx-bot-widget] speech recognition error", e.error);
+        }
+      });
+    } else {
+      micBtn.style.opacity = "0.4";
+    }
+
+    micBtn.addEventListener("click", () => {
+      if (!recognition) {
+        alert("Voice input isn't supported in this browser — try Chrome on desktop or Android.");
+        return;
+      }
+      if (recognizing) {
+        recognition.stop();
+        return;
+      }
+      recognition.lang = currentVoiceLang();
+      try {
+        recognition.start();
+      } catch (err) {
+        console.warn("[rawx-bot-widget] could not start recognition", err);
+      }
+    });
 
     function setActiveConversation(id) {
       conversationId = id;
@@ -549,9 +900,10 @@
       tab.addEventListener("click", () => {
         genTabs.forEach((t) => t.classList.remove("active"));
         tab.classList.add("active");
-        const isDoc = tab.dataset.tab === "document";
-        genDocView.style.display = isDoc ? "flex" : "none";
-        genImgView.style.display = isDoc ? "none" : "flex";
+        const tabName = tab.dataset.tab;
+        genDocView.style.display = tabName === "document" ? "flex" : "none";
+        genImgView.style.display = tabName === "image" ? "flex" : "none";
+        genVidView.style.display = tabName === "video" ? "flex" : "none";
       });
     });
 
@@ -616,6 +968,55 @@
       }
     });
 
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    genVidBtn.addEventListener("click", async () => {
+      const prompt = genVidPrompt.value.trim();
+      if (!prompt) return;
+      genVidBtn.disabled = true;
+      genVidResult.innerHTML = "";
+      genVidStatus.textContent = "Submitting…";
+      try {
+        const startRes = await fetch(`${ENDPOINT}/api/generate/video/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, duration: Number(genVidDuration.value) }),
+        });
+        const startData = await startRes.json();
+        if (!startRes.ok) throw new Error(startData.error || "couldn't start video job");
+        const requestId = startData.requestId;
+
+        // Poll every 5s, up to ~2 minutes, since video generation is slow.
+        let attempts = 0;
+        let done = false;
+        while (attempts < 24 && !done) {
+          genVidStatus.textContent = `Generating… (${attempts * 5}s)`;
+          await sleep(5000);
+          const statusRes = await fetch(`${ENDPOINT}/api/generate/video/status?id=${encodeURIComponent(requestId)}`);
+          const statusData = await statusRes.json();
+          if (!statusRes.ok) throw new Error(statusData.error || "status check failed");
+          if (statusData.status === "done" || statusData.status === "completed") {
+            const videoUrl = statusData.video?.url || statusData.url;
+            if (!videoUrl) throw new Error("Job finished but no video URL was returned");
+            genVidResult.innerHTML = `<video controls src="${videoUrl}"></video><a href="${videoUrl}" target="_blank" rel="noopener noreferrer">Open video</a>`;
+            genVidStatus.textContent = "";
+            done = true;
+          } else if (statusData.status === "failed" || statusData.status === "error") {
+            throw new Error(statusData.error || "Video generation failed");
+          }
+          attempts += 1;
+        }
+        if (!done) genVidStatus.textContent = "Still generating — check back, or try a shorter clip.";
+      } catch (err) {
+        genVidStatus.textContent = `Couldn't generate: ${err.message}`;
+        console.warn("[rawx-bot-widget]", err);
+      } finally {
+        genVidBtn.disabled = false;
+      }
+    });
+
     newChatBtn.addEventListener("click", startNewConversation);
     sidebarNewBtn.addEventListener("click", startNewConversation);
 
@@ -659,6 +1060,7 @@
             messages: history,
             images,
             provider,
+            system: getPersonalitySystemPrompt(),
             stream: false,
             sessionId: SESSION_ID,
             conversationId,
@@ -669,6 +1071,7 @@
         thinking.remove();
         addMessage(messagesEl, "assistant", data.text, data.providerUsed);
         history.push({ role: "assistant", content: data.text });
+        if (autoSpeak) speak(data.text);
       } catch (err) {
         thinking.remove();
         addMessage(messagesEl, "assistant", "Sorry, I couldn't get a response right now.");
@@ -690,6 +1093,7 @@
             messages: history,
             images,
             provider,
+            system: getPersonalitySystemPrompt(),
             stream: true,
             sessionId: SESSION_ID,
             conversationId,
@@ -729,6 +1133,10 @@
           }
         }
         history.push({ role: "assistant", content: fullText });
+        if (fullText) {
+          addSpeakButton(bubble, fullText);
+          if (autoSpeak) speak(fullText);
+        }
       } catch (err) {
         bubble.textContent = "Sorry, I couldn't get a response right now.";
         console.warn("[rawx-bot-widget]", err);

@@ -1,6 +1,6 @@
 /**
  * ==========================================================================
- * RAWx BOT Chat Widget — Step 1: persistent memory + multiple conversations
+ * RAWx BOT Chat Widget — Step 2: persistent memory + image upload
  * ==========================================================================
  * Usage (unchanged):
  *   <script>
@@ -9,14 +9,19 @@
  *   </script>
  *   <script src="chat-widget.js"></script>
  *
- * New in this version:
- *   - A per-browser sessionId is generated and stored in localStorage.
- *   - A history icon opens a sidebar listing past conversations (title +
- *     time), fetched from the Worker's /api/conversations route.
- *   - "New chat" starts a fresh conversation.
- *   - Clicking a past conversation loads its full message history.
- *   - Class names are unprefixed-friendly for brutalist re-theming from the
- *     host page's own injected <style> override, same pattern as before.
+ * New in this version (on top of Step 1 — memory/sidebar/new chat):
+ *   - A 📎 attach button next to the input opens a file picker (images only,
+ *     up to 3 at a time, 4MB each — same limits the backend enforces).
+ *   - Selected images show as small thumbnails above the input, each with
+ *     an × to remove before sending.
+ *   - On submit, images are base64-encoded and sent as a top-level `images`
+ *     field on the request — NOT folded into the `history` array, so they
+ *     are only ever sent once (the turn they're attached to) rather than
+ *     being silently re-uploaded on every later message.
+ *   - The sent user bubble shows a small image-count tag so it's clear a
+ *     picture was attached, even though — per the backend's design — the
+ *     image itself won't be there anymore if the conversation is reloaded
+ *     later (only "[N image(s) attached]" persists).
  * ==========================================================================
  */
 (function () {
@@ -25,6 +30,10 @@
 
   const SESSION_KEY = "mab_session_id";
   const ACTIVE_CONV_KEY = "mab_active_conv_id";
+
+  const MAX_IMAGES = 3;
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+  const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
   function getOrCreateSessionId() {
     let id = localStorage.getItem(SESSION_KEY);
@@ -64,9 +73,29 @@
   .mab-msg.user{ align-self:flex-end; background:#1a1a1a; color:#fff; }
   .mab-msg.assistant{ align-self:flex-start; background:#eee; color:#111; }
   .mab-msg.assistant .mab-provider-tag{ display:block; font-size:0.62rem; opacity:0.55; margin-bottom:3px; text-transform:uppercase; letter-spacing:0.05em; }
-  .mab-form{ display:flex; border-top:1px solid #eee; }
-  .mab-form input{ flex:1; border:none; padding:12px 14px; font-size:0.88rem; outline:none; }
-  .mab-form button{ background:#1a1a1a; color:#fff; border:none; padding:0 18px; cursor:pointer; font-size:0.8rem; }
+  .mab-msg .mab-img-tag{ display:inline-block; font-size:0.68rem; opacity:0.75; margin-top:4px; }
+
+  .mab-attach-preview{
+    display:flex; gap:8px; padding:10px 14px 0; flex-wrap:wrap;
+  }
+  .mab-attach-thumb{
+    position:relative; width:52px; height:52px; border-radius:8px; overflow:hidden; border:1px solid #ddd;
+  }
+  .mab-attach-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .mab-attach-thumb button{
+    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+    background:#1a1a1a; color:#fff; border:none; font-size:0.65rem; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .mab-attach-error{ padding:6px 14px 0; font-size:0.72rem; color:#c81d11; }
+
+  .mab-form{ display:flex; border-top:1px solid #eee; align-items:center; }
+  .mab-attach-btn{
+    background:none; border:none; cursor:pointer; font-size:1rem; padding:0 10px; color:#555; flex-shrink:0;
+  }
+  .mab-attach-btn:hover{ color:#111; }
+  .mab-form input[type="text"]{ flex:1; border:none; padding:12px 6px; font-size:0.88rem; outline:none; }
+  .mab-form button[type="submit"]{ background:#1a1a1a; color:#fff; border:none; padding:0 18px; height:100%; cursor:pointer; font-size:0.8rem; }
 
   .mab-sidebar{
     width:100%; background:#fff; overflow-y:auto; display:flex; flex-direction:column;
@@ -125,7 +154,11 @@
         </div>
         <div class="mab-messages"></div>
       </div>
+      <div class="mab-attach-preview"></div>
+      <div class="mab-attach-error"></div>
       <form class="mab-form">
+        <button type="button" class="mab-attach-btn" aria-label="Attach image" title="Attach image">&#128206;</button>
+        <input type="file" class="mab-file-input" accept="image/jpeg,image/png,image/webp,image/gif" multiple style="display:none">
         <input type="text" placeholder="Type a message..." required>
         <button type="submit">Send</button>
       </form>
@@ -138,14 +171,18 @@
     return panel;
   }
 
-  function addMessage(container, role, text, providerUsed) {
+  function addMessage(container, role, text, providerUsed, imageCount) {
     const div = document.createElement("div");
     div.className = `mab-msg ${role}`;
+    let html = "";
     if (role === "assistant" && providerUsed) {
-      div.innerHTML = `<span class="mab-provider-tag">${providerUsed}</span>${escapeHtml(text)}`;
-    } else {
-      div.textContent = text;
+      html += `<span class="mab-provider-tag">${providerUsed}</span>`;
     }
+    html += escapeHtml(text);
+    if (role === "user" && imageCount) {
+      html += `<span class="mab-img-tag"> 📎 ${imageCount} image${imageCount > 1 ? "s" : ""}</span>`;
+    }
+    div.innerHTML = html;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     return div;
@@ -165,6 +202,25 @@
     }
   }
 
+  // Reads a File as base64 (no data: prefix), resolving { mediaType, data, previewUrl }.
+  function readImageFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result || "";
+        const commaIdx = result.indexOf(",");
+        resolve({
+          mediaType: file.type,
+          data: commaIdx >= 0 ? result.slice(commaIdx + 1) : result,
+          previewUrl: result,
+          name: file.name,
+        });
+      };
+      reader.onerror = () => reject(new Error("Could not read file"));
+      reader.readAsDataURL(file);
+    });
+  }
+
   function init() {
     injectStyle();
     const panel = buildUI();
@@ -175,11 +231,16 @@
     const newChatBtn = panel.querySelector(".mab-new-chat");
     const sidebarNewBtn = panel.querySelector(".mab-sidebar-new");
     const form = panel.querySelector(".mab-form");
-    const input = form.querySelector("input");
+    const input = form.querySelector("input[type='text']");
     const providerSelect = panel.querySelector(".mab-provider");
+    const attachBtn = panel.querySelector(".mab-attach-btn");
+    const fileInput = panel.querySelector(".mab-file-input");
+    const previewEl = panel.querySelector(".mab-attach-preview");
+    const attachErrorEl = panel.querySelector(".mab-attach-error");
 
     let history = [];
     let conversationId = localStorage.getItem(ACTIVE_CONV_KEY) || null;
+    let pendingImages = []; // { mediaType, data, previewUrl, name }
 
     function setActiveConversation(id) {
       conversationId = id;
@@ -191,6 +252,55 @@
       messagesEl.innerHTML = "";
       history.forEach((m) => addMessage(messagesEl, m.role, m.content));
     }
+
+    function showAttachError(msg) {
+      attachErrorEl.textContent = msg;
+      if (msg) setTimeout(() => { if (attachErrorEl.textContent === msg) attachErrorEl.textContent = ""; }, 4000);
+    }
+
+    function renderPreview() {
+      previewEl.innerHTML = "";
+      pendingImages.forEach((img, idx) => {
+        const thumb = document.createElement("div");
+        thumb.className = "mab-attach-thumb";
+        thumb.innerHTML = `<img src="${img.previewUrl}" alt=""><button type="button" aria-label="Remove image">&times;</button>`;
+        thumb.querySelector("button").addEventListener("click", () => {
+          pendingImages.splice(idx, 1);
+          renderPreview();
+        });
+        previewEl.appendChild(thumb);
+      });
+    }
+
+    attachBtn.addEventListener("click", () => fileInput.click());
+
+    fileInput.addEventListener("change", async () => {
+      const files = Array.from(fileInput.files || []);
+      fileInput.value = "";
+      if (files.length === 0) return;
+
+      for (const file of files) {
+        if (pendingImages.length >= MAX_IMAGES) {
+          showAttachError(`You can attach up to ${MAX_IMAGES} images.`);
+          break;
+        }
+        if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+          showAttachError("Only JPEG, PNG, WEBP, or GIF images are supported.");
+          continue;
+        }
+        if (file.size > MAX_IMAGE_BYTES) {
+          showAttachError(`"${file.name}" is over the 4MB limit.`);
+          continue;
+        }
+        try {
+          const read = await readImageFile(file);
+          pendingImages.push(read);
+        } catch (err) {
+          console.warn("[rawx-bot-widget]", err);
+        }
+      }
+      renderPreview();
+    });
 
     async function loadConversationList() {
       sidebarListEl.innerHTML = `<div class="mab-sidebar-empty">Loading…</div>`;
@@ -238,6 +348,8 @@
       history = [];
       setActiveConversation(null);
       messagesEl.innerHTML = "";
+      pendingImages = [];
+      renderPreview();
       sidebarEl.style.display = "none";
       messagesEl.style.display = "flex";
       input.focus();
@@ -270,20 +382,25 @@
 
       if (!conversationId) setActiveConversation(crypto.randomUUID());
 
-      addMessage(messagesEl, "user", text);
+      const imagesToSend = pendingImages.map((img) => ({ mediaType: img.mediaType, data: img.data }));
+      const imageCount = imagesToSend.length;
+
+      addMessage(messagesEl, "user", text, null, imageCount);
       history.push({ role: "user", content: text });
       input.value = "";
+      pendingImages = [];
+      renderPreview();
 
       const provider = providerSelect.value || undefined;
 
       if (STREAM) {
-        await streamReply(provider);
+        await streamReply(provider, imagesToSend);
       } else {
-        await plainReply(provider);
+        await plainReply(provider, imagesToSend);
       }
     });
 
-    async function plainReply(provider) {
+    async function plainReply(provider, images) {
       const thinking = addMessage(messagesEl, "assistant", "...");
       try {
         const res = await fetch(ENDPOINT, {
@@ -291,6 +408,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messages: history,
+            images,
             provider,
             stream: false,
             sessionId: SESSION_ID,
@@ -309,7 +427,7 @@
       }
     }
 
-    async function streamReply(provider) {
+    async function streamReply(provider, images) {
       const bubble = addMessage(messagesEl, "assistant", "");
       let fullText = "";
       let providerUsed = null;
@@ -321,6 +439,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messages: history,
+            images,
             provider,
             stream: true,
             sessionId: SESSION_ID,

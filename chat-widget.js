@@ -1,6 +1,15 @@
 /**
  * ==========================================================================
- * RAWx BOT Chat Widget — Step 3: memory + image upload + Drive folder search
+ * RAWx BOT Chat Widget — Step 4: memory + upload + Drive search + generate
+ * ==========================================================================
+ * New in this version (on top of Step 3):
+ *   - A ✨ button next to Search opens a Generate panel with two tabs:
+ *     "Document" (pick Quotation / Spec Sheet / Product Copy, type a short
+ *     brief, get back plain-text copy with a Copy button) and "Image"
+ *     (type a prompt, get back a generated image with a Download link).
+ *   - Both call one-shot Worker endpoints (/api/generate/document,
+ *     /api/generate/image) — not part of the chat thread, nothing saved
+ *     to conversation history.
  * ==========================================================================
  * New in this version (on top of Step 2):
  *   - A 🔍 button next to History/New chat opens a search panel.
@@ -145,6 +154,29 @@
     font-size:0.68rem; padding:6px 8px; line-height:1.3; word-break:break-word;
   }
   .mab-search-empty{ padding:24px 16px; font-size:0.78rem; color:#888; text-align:center; grid-column:1 / -1; }
+
+  .mab-generate-panel{ width:100%; background:#fff; overflow-y:auto; display:flex; flex-direction:column; }
+  .mab-gen-tabs{ display:flex; border-bottom:1px solid #eee; }
+  .mab-gen-tab{
+    flex:1; background:none; border:none; padding:10px; font-size:0.78rem; cursor:pointer; color:#888;
+    border-bottom:2px solid transparent;
+  }
+  .mab-gen-tab.active{ color:#111; border-bottom-color:#1a1a1a; font-weight:600; }
+  .mab-gen-view{ display:flex; flex-direction:column; gap:8px; padding:12px; }
+  .mab-gen-view select, .mab-gen-view textarea{
+    width:100%; border:1px solid #ddd; border-radius:6px; padding:8px 10px; font-size:0.82rem;
+    font-family: inherit; outline:none; resize:vertical;
+  }
+  .mab-gen-view button{
+    background:#1a1a1a; color:#fff; border:none; border-radius:6px; padding:9px; font-size:0.8rem; cursor:pointer;
+  }
+  .mab-gen-view button:disabled{ opacity:0.5; cursor:default; }
+  .mab-gen-doc-status, .mab-gen-img-status{ font-size:0.74rem; color:#888; min-height:1em; }
+  .mab-gen-doc-output-wrap{ display:flex; flex-direction:column; gap:8px; }
+  .mab-gen-doc-output{ background:#fafafa; }
+  .mab-gen-img-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .mab-gen-img-result img{ max-width:100%; border-radius:8px; border:1px solid #eee; }
+  .mab-gen-img-result a{ font-size:0.78rem; color:#1a1a1a; }
   `;
 
   function injectStyle() {
@@ -167,6 +199,7 @@
         <div class="mab-head-actions">
           <button type="button" class="mab-icon-btn mab-history-toggle" aria-label="History" title="History">&#9776;</button>
           <button type="button" class="mab-icon-btn mab-search-toggle" aria-label="Search" title="Search">&#128269;</button>
+          <button type="button" class="mab-icon-btn mab-generate-toggle" aria-label="Generate" title="Generate">&#10024;</button>
           <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
         </div>
         <span class="mab-head-title">Ask us anything</span>
@@ -191,6 +224,32 @@
             <button type="button" class="mab-search-btn">Search</button>
           </div>
           <div class="mab-search-results"></div>
+        </div>
+        <div class="mab-generate-panel" style="display:none;">
+          <div class="mab-gen-tabs">
+            <button type="button" class="mab-gen-tab active" data-tab="document">Document</button>
+            <button type="button" class="mab-gen-tab" data-tab="image">Image</button>
+          </div>
+          <div class="mab-gen-view mab-gen-doc">
+            <select class="mab-gen-doctype">
+              <option value="quotation">Quotation</option>
+              <option value="specsheet">Spec Sheet</option>
+              <option value="productcopy">Product Copy</option>
+            </select>
+            <textarea class="mab-gen-brief" rows="3" placeholder="Describe the product — e.g. 'genuine leather wallet, 3 colors, 500 pcs, for a Japan buyer'"></textarea>
+            <button type="button" class="mab-gen-doc-btn">Generate</button>
+            <div class="mab-gen-doc-status"></div>
+            <div class="mab-gen-doc-output-wrap" style="display:none;">
+              <textarea class="mab-gen-doc-output" rows="8" readonly></textarea>
+              <button type="button" class="mab-gen-doc-copy">Copy text</button>
+            </div>
+          </div>
+          <div class="mab-gen-view mab-gen-img" style="display:none;">
+            <textarea class="mab-gen-img-prompt" rows="3" placeholder="Describe the image — e.g. 'brown leather messenger bag on a plain white studio background'"></textarea>
+            <button type="button" class="mab-gen-img-btn">Generate</button>
+            <div class="mab-gen-img-status"></div>
+            <div class="mab-gen-img-result"></div>
+          </div>
         </div>
         <div class="mab-messages"></div>
       </div>
@@ -273,6 +332,22 @@
     const searchInput = panel.querySelector(".mab-search-input");
     const searchBtn = panel.querySelector(".mab-search-btn");
     const searchResultsEl = panel.querySelector(".mab-search-results");
+    const generatePanelEl = panel.querySelector(".mab-generate-panel");
+    const generateToggle = panel.querySelector(".mab-generate-toggle");
+    const genTabs = panel.querySelectorAll(".mab-gen-tab");
+    const genDocView = panel.querySelector(".mab-gen-doc");
+    const genImgView = panel.querySelector(".mab-gen-img");
+    const genDocType = panel.querySelector(".mab-gen-doctype");
+    const genBrief = panel.querySelector(".mab-gen-brief");
+    const genDocBtn = panel.querySelector(".mab-gen-doc-btn");
+    const genDocStatus = panel.querySelector(".mab-gen-doc-status");
+    const genDocOutputWrap = panel.querySelector(".mab-gen-doc-output-wrap");
+    const genDocOutput = panel.querySelector(".mab-gen-doc-output");
+    const genDocCopy = panel.querySelector(".mab-gen-doc-copy");
+    const genImgPrompt = panel.querySelector(".mab-gen-img-prompt");
+    const genImgBtn = panel.querySelector(".mab-gen-img-btn");
+    const genImgStatus = panel.querySelector(".mab-gen-img-status");
+    const genImgResult = panel.querySelector(".mab-gen-img-result");
     const newChatBtn = panel.querySelector(".mab-new-chat");
     const sidebarNewBtn = panel.querySelector(".mab-sidebar-new");
     const form = panel.querySelector(".mab-form");
@@ -393,6 +468,7 @@
       messagesEl.style.display = view === "chat" ? "flex" : "none";
       sidebarEl.style.display = view === "history" ? "flex" : "none";
       searchPanelEl.style.display = view === "search" ? "flex" : "none";
+      generatePanelEl.style.display = view === "generate" ? "flex" : "none";
     }
 
     function startNewConversation() {
@@ -462,6 +538,82 @@
     searchBtn.addEventListener("click", runDriveSearch);
     searchInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") runDriveSearch();
+    });
+
+    generateToggle.addEventListener("click", () => {
+      const showing = generatePanelEl.style.display !== "none";
+      setView(showing ? "chat" : "generate");
+    });
+
+    genTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        genTabs.forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+        const isDoc = tab.dataset.tab === "document";
+        genDocView.style.display = isDoc ? "flex" : "none";
+        genImgView.style.display = isDoc ? "none" : "flex";
+      });
+    });
+
+    genDocBtn.addEventListener("click", async () => {
+      const brief = genBrief.value.trim();
+      if (!brief) return;
+      genDocBtn.disabled = true;
+      genDocStatus.textContent = "Generating…";
+      genDocOutputWrap.style.display = "none";
+      try {
+        const res = await fetch(`${ENDPOINT}/api/generate/document`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ docType: genDocType.value, brief }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "generation failed");
+        genDocOutput.value = data.text || "";
+        genDocOutputWrap.style.display = "flex";
+        genDocStatus.textContent = "";
+      } catch (err) {
+        genDocStatus.textContent = "Couldn't generate — try again.";
+        console.warn("[rawx-bot-widget]", err);
+      } finally {
+        genDocBtn.disabled = false;
+      }
+    });
+
+    genDocCopy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(genDocOutput.value);
+        genDocCopy.textContent = "Copied!";
+        setTimeout(() => { genDocCopy.textContent = "Copy text"; }, 1500);
+      } catch {
+        genDocOutput.select();
+      }
+    });
+
+    genImgBtn.addEventListener("click", async () => {
+      const prompt = genImgPrompt.value.trim();
+      if (!prompt) return;
+      genImgBtn.disabled = true;
+      genImgStatus.textContent = "Generating…";
+      genImgResult.innerHTML = "";
+      try {
+        const res = await fetch(`${ENDPOINT}/api/generate/image`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "generation failed");
+        const { mediaType, data: b64 } = data.image;
+        const dataUrl = `data:${mediaType};base64,${b64}`;
+        genImgResult.innerHTML = `<img src="${dataUrl}" alt=""><a download="rawx-generated.png" href="${dataUrl}">Download image</a>`;
+        genImgStatus.textContent = "";
+      } catch (err) {
+        genImgStatus.textContent = "Couldn't generate — try again.";
+        console.warn("[rawx-bot-widget]", err);
+      } finally {
+        genImgBtn.disabled = false;
+      }
     });
 
     newChatBtn.addEventListener("click", startNewConversation);

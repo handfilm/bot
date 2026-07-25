@@ -1,10 +1,23 @@
 /**
  * ==========================================================================
- * RAWx BOT Backend — Claude + Gemini + Grok + memory + image upload (vision)
+ * RAWx BOT Backend — Claude + Gemini + Grok + memory + upload + Drive search
  * ==========================================================================
  *
- * STEP 2 OF 4 (Memory > Upload > Search > Generate) — this file adds, on top
- * of the Step 1 (Memory) backend:
+ * STEP 3 OF 4 (Memory > Upload > Search > Generate) — this file adds, on top
+ * of the Step 2 (Memory + Upload) backend:
+ *
+ *   - GET /api/drive-search?q=... — searches a public "anyone with the link"
+ *     Google Drive folder by filename keyword match (v1, no AI captioning
+ *     yet). Requires a GDRIVE_API_KEY secret (Settings -> Variables and
+ *     Secrets), no OAuth needed since the folder is publicly link-shared.
+ *   - The file list is cached in CHAT_KV for 10 minutes so repeated searches
+ *     don't re-hit the Drive API every time.
+ *   - This indexes the WHOLE configured folder (GDRIVE_FOLDER_ID below) —
+ *     no public/private separation yet. Anything in that folder is
+ *     returned to anyone who searches a matching keyword on the public
+ *     site. Revisit before adding anything sensitive to that folder.
+ *
+ * Everything below this point (Memory + Upload) is unchanged from Step 2:
  *
  *   - Images can be attached to a chat turn: POST body gets an optional
  *     `images: [{ mediaType, data }]` field (data = base64, no data: prefix).
@@ -71,6 +84,74 @@ const MAX_MESSAGES_PER_CONVERSATION = 200;
 const MAX_IMAGES_PER_TURN = 3;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4MB
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+// ---------------------------------------------------------------------------
+// Google Drive folder search (Step 3, v1 — filename keyword matching)
+// ---------------------------------------------------------------------------
+// Public "anyone with the link" Drive folder. Read-only access via a plain
+// API key (Settings -> Variables and Secrets -> GDRIVE_API_KEY), no OAuth.
+const GDRIVE_FOLDER_ID = "1BNzQpgYtf-CB7GemrQVtqIWGQEkTiZIT";
+const DRIVE_CACHE_KEY = "drive:filelist";
+const DRIVE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const DRIVE_MAX_RESULTS = 12;
+
+async function fetchDriveFileList(env) {
+  if (!env.GDRIVE_API_KEY) {
+    throw new Error("GDRIVE_API_KEY not configured");
+  }
+  const fields = "files(id,name,mimeType,webViewLink,thumbnailLink,iconLink)";
+  const q = encodeURIComponent(`'${GDRIVE_FOLDER_ID}' in parents and trashed = false`);
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${encodeURIComponent(fields)}&pageSize=1000&key=${env.GDRIVE_API_KEY}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Drive API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.files || [];
+}
+
+async function getCachedDriveFiles(env) {
+  const raw = await env.CHAT_KV.get(DRIVE_CACHE_KEY);
+  if (raw) {
+    const cached = JSON.parse(raw);
+    if (Date.now() - cached.fetchedAt < DRIVE_CACHE_TTL_MS) {
+      return cached.files;
+    }
+  }
+  const files = await fetchDriveFileList(env);
+  await env.CHAT_KV.put(DRIVE_CACHE_KEY, JSON.stringify({ files, fetchedAt: Date.now() }));
+  return files;
+}
+
+function scoreDriveFiles(files, query) {
+  const words = (query || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
+  if (words.length === 0) return [];
+
+  const scored = files
+    .map((f) => {
+      const name = (f.name || "").toLowerCase();
+      let score = 0;
+      for (const w of words) {
+        if (name.includes(w)) score += 1;
+      }
+      return { file: f, score };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, DRIVE_MAX_RESULTS)
+    .map((s) => ({
+      id: s.file.id,
+      name: s.file.name,
+      mimeType: s.file.mimeType,
+      webViewLink: s.file.webViewLink,
+      thumbnailLink: s.file.thumbnailLink || null,
+      iconLink: s.file.iconLink || null,
+    }));
+
+  return scored;
+}
 
 function validateImages(images) {
   if (images === undefined || images === null) return { ok: true, images: [] };
@@ -456,6 +537,19 @@ export default {
       if (!sessionId || !id) return json({ error: "sessionId and id required" }, 400, headers);
       await deleteConversation(env, sessionId, id);
       return json({ ok: true }, 200, headers);
+    }
+
+    // ---------------------- GET /api/drive-search?q=... ----------------------
+    if (request.method === "GET" && url.pathname === "/api/drive-search") {
+      const q = url.searchParams.get("q") || "";
+      if (!q.trim()) return json({ query: q, results: [] }, 200, headers);
+      try {
+        const files = await getCachedDriveFiles(env);
+        const results = scoreDriveFiles(files, q);
+        return json({ query: q, results }, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
     }
 
     // ---------------------------- POST / (chat) ----------------------------

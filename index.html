@@ -333,64 +333,9 @@
     var launcher = document.querySelector('.mab-launcher');
     if (launcher) launcher.click();
   });
-
-  // ---------------------------------------------------------------------
-  // Brutalist re-theme for the chat widget. chat-widget.js injects its own
-  // <style> tag at load time; this block runs after and is appended later
-  // in <head>, so it wins the cascade without needing to touch the widget
-  // source file directly.
-  // ---------------------------------------------------------------------
-  var override = document.createElement('style');
-  override.textContent = `
-    .mab-launcher{
-      border-radius:0 !important;
-      background:#c81d11 !important;
-      border:1px solid #c81d11 !important;
-      box-shadow:none !important;
-    }
-    .mab-launcher:hover{ background:#e0231a !important; }
-    .mab-panel{
-      border-radius:0 !important;
-      background:#0d0d0c !important;
-      border:1px solid rgba(236,231,220,0.32) !important;
-      box-shadow:0 24px 60px rgba(0,0,0,.55) !important;
-      font-family:'JetBrains Mono', ui-monospace, monospace !important;
-    }
-    .mab-head{
-      background:#0d0d0c !important;
-      border-bottom:1px solid rgba(236,231,220,0.18) !important;
-      text-transform:uppercase; letter-spacing:0.08em; font-size:0.68rem !important;
-      font-weight:700;
-    }
-    .mab-head select{
-      background:#161615 !important; color:#ece7dc !important;
-      border:1px solid rgba(236,231,220,0.32) !important; border-radius:0 !important;
-      font-family:'JetBrains Mono', monospace !important;
-    }
-    .mab-close{ color:#ece7dc !important; }
-    .mab-messages{ background:#161615 !important; }
-    .mab-msg{
-      border-radius:0 !important;
-      font-family:'JetBrains Mono', ui-monospace, monospace !important;
-      font-size:0.8rem !important;
-    }
-    .mab-msg.user{ background:#c81d11 !important; color:#ece7dc !important; }
-    .mab-msg.assistant{ background:#0d0d0c !important; color:#ece7dc !important; border:1px solid rgba(236,231,220,0.14) !important; }
-    .mab-msg.assistant .mab-provider-tag{ color:#c81d11 !important; opacity:1 !important; font-weight:700; }
-    .mab-form{ border-top:1px solid rgba(236,231,220,0.18) !important; }
-    .mab-form input{
-      background:#0d0d0c !important; color:#ece7dc !important;
-      font-family:'JetBrains Mono', monospace !important; font-size:0.8rem !important;
-    }
-    .mab-form input::placeholder{ color:#6b6b62 !important; }
-    .mab-form button{
-      background:#c81d11 !important; border-radius:0 !important;
-      text-transform:uppercase; letter-spacing:0.06em; font-size:0.72rem !important;
-      font-weight:700;
-    }
-    .mab-form button:hover{ background:#e0231a !important; }
-  `;
-  document.head.appendChild(override);
+  // Note: chat-widget.js now carries its own brutalist "dispatch terminal"
+  // theme natively (void/paper/signal tokens, JetBrains Mono, hard edges,
+  // menu drawer, dispatch ticket ref) — no re-theme patch needed here.
 </script>
 
 </body>

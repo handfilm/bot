@@ -1,0 +1,12 @@
+{
+  "background_color": "#ffffff",
+  "description": "RAWx BOT — triple-engine dispatch terminal. Ask, Create, Deploy. Routed live across Claude, Gemini and Grok.",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "RAWx BOT",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "RAWx BOT",
+  "start_url": "/",
+  "theme_color": "#ff0603"
+}

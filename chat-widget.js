@@ -125,218 +125,303 @@
 
   const SESSION_ID = getOrCreateSessionId();
 
-  const STYLE = `
-  .mab-launcher{
-    position:fixed; bottom:24px; right:24px; z-index:9999; width:58px; height:58px; border-radius:50%;
-    background:#1a1a1a; border:1px solid #333; color:#fff; cursor:pointer;
-    display:flex; align-items:center; justify-content:center; box-shadow:0 6px 20px rgba(0,0,0,.35);
-    font-family: system-ui, sans-serif;
+  const TICKET_KEY = "mab_ticket_no";
+  function getOrCreateTicketNo() {
+    let no = localStorage.getItem(TICKET_KEY);
+    if (!no) {
+      no = String(Math.floor(1000 + Math.random() * 9000));
+      localStorage.setItem(TICKET_KEY, no);
+    }
+    return no;
   }
-  .mab-launcher:hover{ background:#2a2a2a; }
+
+  const STYLE = `
+  .mab-launcher, .mab-panel{
+    --void:#0d0d0c; --void-2:#161615; --paper:#ece7dc; --paper-dim:#c9c4b6;
+    --signal:#c81d11; --signal-hi:#e0231a; --signal-dim:#7a140b; --steel:#6b6b62; --brass:#a8823d;
+    --line:rgba(236,231,220,0.14); --line-strong:rgba(236,231,220,0.32);
+    --mono:'JetBrains Mono', ui-monospace, monospace; --stamp:'Anton', sans-serif;
+  }
+
+  .mab-launcher{
+    position:fixed; bottom:24px; right:24px; z-index:9999; width:54px; height:54px; border-radius:0;
+    background:var(--signal); border:1px solid var(--signal); color:var(--paper); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; box-shadow:0 10px 28px rgba(0,0,0,.5);
+    font-family:var(--mono); transition:background .15s ease, transform .1s ease;
+  }
+  .mab-launcher:hover{ background:var(--signal-hi); transform:translateY(-1px); }
+  .mab-launcher:active{ transform:translateY(0) scale(.96); }
+
   .mab-panel{
-    position:fixed; bottom:92px; right:24px; z-index:9999; width:380px; max-width:calc(100vw - 32px);
-    max-height:560px; background:#fff; border:1px solid #ddd; border-radius:12px; overflow:hidden;
-    display:none; flex-direction:column; box-shadow:0 16px 48px rgba(0,0,0,.25);
-    font-family: system-ui, sans-serif;
+    position:fixed; bottom:88px; right:24px; z-index:9999; width:400px; max-width:calc(100vw - 32px);
+    max-height:600px; background:var(--void); border:1px solid var(--line-strong); border-radius:0; overflow:hidden;
+    display:none; flex-direction:column; box-shadow:0 24px 60px rgba(0,0,0,.55);
+    font-family:var(--mono); color:var(--paper);
   }
   .mab-panel.open{ display:flex; }
-  .mab-head{ display:flex; flex-direction:column; gap:8px; padding:12px 16px; background:#1a1a1a; color:#fff; font-size:0.85rem; }
-  .mab-head-top{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .mab-head-tools{ display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
-  .mab-head-actions{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  .mab-icon-btn{ background:none; border:none; color:#ddd; cursor:pointer; font-size:0.92rem; padding:2px 4px; line-height:1; }
-  .mab-icon-btn:hover{ color:#fff; }
-  .mab-head select{ background:#2a2a2a; color:#fff; border:1px solid #444; font-size:0.72rem; border-radius:6px; padding:4px 6px; }
-  .mab-close{ background:none; border:none; color:#bbb; cursor:pointer; font-size:1rem; }
-  .mab-body{ flex:1; display:flex; overflow:hidden; min-height:0; }
-  .mab-messages{ flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px; min-height:200px; background:#fafafa; }
-  .mab-msg{ font-size:0.88rem; line-height:1.45; padding:9px 13px; border-radius:10px; max-width:85%; white-space:pre-wrap; }
-  .mab-msg.user{ align-self:flex-end; background:#1a1a1a; color:#fff; }
-  .mab-msg.assistant{ align-self:flex-start; background:#eee; color:#111; }
-  .mab-msg.assistant .mab-provider-tag{ display:block; font-size:0.62rem; opacity:0.55; margin-bottom:3px; text-transform:uppercase; letter-spacing:0.05em; }
-  .mab-msg .mab-img-tag{ display:inline-block; font-size:0.68rem; opacity:0.75; margin-top:4px; }
 
-  .mab-attach-preview{
-    display:flex; gap:8px; padding:10px 14px 0; flex-wrap:wrap;
+  /* ---------- header: brand mark + ticket ref, minimal actions ---------- */
+  .mab-head{
+    display:flex; flex-direction:column; padding:14px 16px 10px; background:var(--void);
+    border-bottom:1px solid var(--line-strong); font-size:0.85rem; position:relative; flex-shrink:0;
   }
-  .mab-attach-thumb{
-    position:relative; width:52px; height:52px; border-radius:8px; overflow:hidden; border:1px solid #ddd;
+  .mab-head-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .mab-head-brand{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .mab-head-title{
+    font-family:var(--stamp); font-weight:400; text-transform:uppercase; letter-spacing:0.02em;
+    font-size:1rem; color:var(--paper); white-space:nowrap;
   }
-  .mab-attach-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
-  .mab-attach-thumb button{
-    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
-    background:#1a1a1a; color:#fff; border:none; font-size:0.65rem; line-height:1; cursor:pointer;
-    display:flex; align-items:center; justify-content:center;
+  .mab-ticket-no{
+    font-size:0.62rem; letter-spacing:0.08em; color:var(--steel); text-transform:uppercase;
   }
-  .mab-attach-error{ padding:6px 14px 0; font-size:0.72rem; color:#c81d11; }
+  .mab-head-actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; flex-shrink:0; }
+  .mab-icon-btn{
+    background:none; border:none; color:var(--paper-dim); cursor:pointer; font-size:0.9rem; padding:2px 3px;
+    line-height:1; font-family:var(--mono);
+  }
+  .mab-icon-btn:hover{ color:var(--paper); }
+  .mab-close{ background:none; border:none; color:var(--paper-dim); cursor:pointer; font-size:1.1rem; line-height:1; }
+  .mab-close:hover{ color:var(--paper); }
 
-  .mab-form{ display:flex; border-top:1px solid #eee; align-items:center; }
-  .mab-attach-btn{
-    background:none; border:none; cursor:pointer; font-size:1rem; padding:0 10px; color:#555; flex-shrink:0;
+  .mab-menu-toggle{
+    background:none; border:1px solid var(--line-strong); color:var(--paper-dim); cursor:pointer;
+    font-family:var(--mono); font-size:0.62rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+    padding:5px 9px; line-height:1; display:flex; align-items:center; gap:6px;
   }
-  .mab-attach-btn:hover{ color:#111; }
-  .mab-form input[type="text"]{ flex:1; border:none; padding:12px 6px; font-size:0.88rem; outline:none; }
-  .mab-form button[type="submit"]{ background:#1a1a1a; color:#fff; border:none; padding:0 18px; height:100%; cursor:pointer; font-size:0.8rem; }
+  .mab-menu-toggle:hover{ color:var(--paper); border-color:var(--paper-dim); }
+  .mab-menu-toggle .mab-menu-dot{ width:5px; height:5px; background:var(--signal); display:inline-block; }
+  .mab-menu-toggle.open{ background:var(--signal); border-color:var(--signal); color:var(--paper); }
+  .mab-menu-toggle.open .mab-menu-dot{ background:var(--paper); }
 
-  .mab-sidebar{
-    width:100%; background:#fff; overflow-y:auto; display:flex; flex-direction:column;
+  .mab-head-tools{ display:flex; align-items:center; gap:8px; margin-top:12px; }
+  .mab-head-tools .mab-head-actions{ gap:8px; }
+  .mab-head select{
+    background:var(--void-2); color:var(--paper); border:1px solid var(--line-strong); border-radius:0;
+    font-size:0.66rem; letter-spacing:0.04em; text-transform:uppercase; padding:5px 6px; font-family:var(--mono);
+    appearance:none; -webkit-appearance:none;
   }
-  .mab-sidebar-new{
-    margin:12px; padding:10px 12px; background:#1a1a1a; color:#fff; border:none; border-radius:8px;
-    font-size:0.82rem; cursor:pointer; text-align:left;
-  }
-  .mab-sidebar-list{ flex:1; overflow-y:auto; display:flex; flex-direction:column; }
-  .mab-sidebar-item{
-    padding:10px 14px; border-bottom:1px solid #eee; cursor:pointer; font-size:0.8rem; color:#222;
-    display:flex; flex-direction:column; gap:2px;
-  }
-  .mab-sidebar-item:hover{ background:#f2f2f2; }
-  .mab-sidebar-item .mab-conv-title{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .mab-sidebar-item .mab-conv-time{ font-size:0.66rem; color:#888; }
-  .mab-sidebar-empty{ padding:20px 16px; font-size:0.78rem; color:#888; text-align:center; }
+  .mab-head select:hover{ border-color:var(--paper-dim); }
+  .mab-head select.mab-personality{ max-width:96px; }
 
-  .mab-search-panel{
-    width:100%; background:#fff; overflow-y:auto; display:flex; flex-direction:column;
+  /* ---------- menu drawer (replaces the crowded icon row) ---------- */
+  .mab-menu-drawer{
+    position:absolute; top:100%; left:0; right:0; z-index:20; background:var(--void-2);
+    border-bottom:1px solid var(--line-strong); display:none; flex-direction:column;
+    box-shadow:0 14px 30px rgba(0,0,0,.4);
   }
-  .mab-search-bar{ display:flex; gap:8px; padding:12px; border-bottom:1px solid #eee; }
-  .mab-search-bar input{
-    flex:1; border:1px solid #ddd; border-radius:6px; padding:8px 10px; font-size:0.82rem; outline:none;
+  .mab-menu-drawer.open{ display:flex; }
+  .mab-menu-label{
+    padding:8px 16px 4px; font-size:0.6rem; letter-spacing:0.14em; color:var(--steel); text-transform:uppercase;
   }
-  .mab-search-bar button{
-    background:#1a1a1a; color:#fff; border:none; border-radius:6px; padding:0 14px; font-size:0.78rem; cursor:pointer;
+  .mab-menu-item{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:none; border:none; border-top:1px dashed var(--line); color:var(--paper-dim);
+    font-family:var(--mono); font-size:0.76rem; letter-spacing:0.02em; padding:10px 16px; cursor:pointer;
   }
-  .mab-search-results{
-    flex:1; overflow-y:auto; padding:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start;
-  }
-  .mab-search-item{
-    border:1px solid #eee; border-radius:8px; overflow:hidden; cursor:pointer; text-decoration:none; color:#222;
-    display:flex; flex-direction:column; background:#fafafa;
-  }
-  .mab-search-item .mab-search-thumb{
-    width:100%; height:90px; background:#eee; display:flex; align-items:center; justify-content:center; overflow:hidden;
-  }
-  .mab-search-item .mab-search-thumb img{ width:100%; height:100%; object-fit:cover; }
-  .mab-search-item .mab-search-name{
-    font-size:0.68rem; padding:6px 8px; line-height:1.3; word-break:break-word;
-  }
-  .mab-search-empty{ padding:24px 16px; font-size:0.78rem; color:#888; text-align:center; grid-column:1 / -1; }
-
-  .mab-generate-panel{ width:100%; background:#fff; overflow-y:auto; display:flex; flex-direction:column; }
-  .mab-gen-tabs{ display:flex; border-bottom:1px solid #eee; }
-  .mab-gen-tab{
-    flex:1; background:none; border:none; padding:10px; font-size:0.78rem; cursor:pointer; color:#888;
-    border-bottom:2px solid transparent;
-  }
-  .mab-gen-tab.active{ color:#111; border-bottom-color:#1a1a1a; font-weight:600; }
-  .mab-gen-view{ display:flex; flex-direction:column; gap:8px; padding:12px; }
-  .mab-gen-view select, .mab-gen-view textarea{
-    width:100%; border:1px solid #ddd; border-radius:6px; padding:8px 10px; font-size:0.82rem;
-    font-family: inherit; outline:none; resize:vertical;
-  }
-  .mab-gen-view button{
-    background:#1a1a1a; color:#fff; border:none; border-radius:6px; padding:9px; font-size:0.8rem; cursor:pointer;
-  }
-  .mab-gen-view button:disabled{ opacity:0.5; cursor:default; }
-  .mab-gen-doc-status, .mab-gen-img-status{ font-size:0.74rem; color:#888; min-height:1em; }
-  .mab-gen-doc-output-wrap{ display:flex; flex-direction:column; gap:8px; }
-  .mab-gen-doc-output{ background:#fafafa; }
-  .mab-gen-img-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
-  .mab-gen-img-result img{ max-width:100%; border-radius:8px; border:1px solid #eee; }
-  .mab-gen-img-result a{ font-size:0.78rem; color:#1a1a1a; }
-  .mab-gen-vid-note{ font-size:0.68rem; color:#999; }
-  .mab-gen-vid-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
-  .mab-gen-vid-result video{ max-width:100%; border-radius:8px; border:1px solid #eee; }
-  .mab-gen-vid-result a{ font-size:0.78rem; color:#1a1a1a; }
-
-  .mab-head select.mab-personality{ max-width:88px; }
-  .mab-export-wrap{ position:relative; display:inline-flex; }
+  .mab-menu-item:hover{ color:var(--paper); background:rgba(200,29,17,0.08); border-left:2px solid var(--signal); padding-left:14px; }
+  .mab-menu-item .mab-menu-ico{ width:16px; text-align:center; flex-shrink:0; opacity:0.85; }
+  .mab-menu-item.on{ color:var(--brass); }
+  .mab-export-wrap{ position:relative; display:block; width:100%; }
   .mab-export-menu{
-    position:absolute; top:30px; left:0; background:#fff; border:1px solid #ddd; border-radius:8px;
-    box-shadow:0 10px 28px rgba(0,0,0,.25); display:none; flex-direction:column; z-index:10000;
-    overflow:hidden; min-width:170px;
+    position:static; background:var(--void); border-top:1px dashed var(--line); display:none; flex-direction:column;
+    overflow:hidden;
   }
   .mab-export-menu.open{ display:flex; }
   .mab-export-menu button{
-    background:none; border:none; text-align:left; padding:9px 14px; font-size:0.78rem; cursor:pointer;
-    color:#222; font-family:inherit; white-space:nowrap;
+    background:none; border:none; border-top:1px dashed var(--line); text-align:left; padding:9px 16px 9px 34px;
+    font-size:0.72rem; cursor:pointer; color:var(--paper-dim); font-family:var(--mono); white-space:nowrap;
   }
-  .mab-export-menu button:hover{ background:#f2f2f2; }
-  .mab-export-menu button:disabled{ opacity:0.45; cursor:default; }
+  .mab-export-menu button:first-child{ border-top:none; }
+  .mab-export-menu button:hover{ color:var(--paper); background:rgba(200,29,17,0.08); }
+  .mab-export-menu button:disabled{ opacity:0.4; cursor:default; }
 
-  .mab-speak-toggle.on{ color:#4caf50; }
+  .mab-body{ flex:1; display:flex; overflow:hidden; min-height:0; position:relative; }
+  .mab-messages{
+    flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; min-height:200px;
+    background:var(--void-2);
+    background-image:linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:28px 28px;
+  }
+  .mab-msg{
+    position:relative; font-size:0.82rem; line-height:1.55; padding:10px 13px; border-radius:0; max-width:86%;
+    white-space:pre-wrap; border:1px solid transparent;
+  }
+  .mab-msg.user{ align-self:flex-end; background:var(--signal); color:var(--paper); }
+  .mab-msg.assistant{ align-self:flex-start; background:var(--void); color:var(--paper); border-color:var(--line-strong); }
+  .mab-msg.assistant .mab-provider-tag{
+    display:block; font-size:0.6rem; opacity:1; margin-bottom:5px; text-transform:uppercase; letter-spacing:0.1em;
+    color:var(--signal); font-weight:700;
+  }
+  .mab-msg .mab-img-tag{ display:inline-block; font-size:0.66rem; opacity:0.75; margin-top:4px; }
+
+  .mab-attach-preview{ display:flex; gap:8px; padding:10px 14px 0; flex-wrap:wrap; background:var(--void); }
+  .mab-attach-thumb{ position:relative; width:52px; height:52px; overflow:hidden; border:1px solid var(--line-strong); }
+  .mab-attach-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .mab-attach-thumb button{
+    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:0;
+    background:var(--signal); color:var(--paper); border:none; font-size:0.65rem; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .mab-attach-error{ padding:6px 14px 0; font-size:0.7rem; color:var(--signal); background:var(--void); }
+
+  .mab-form{ display:flex; border-top:1px solid var(--line-strong); align-items:center; background:var(--void); }
+  .mab-attach-btn{ background:none; border:none; cursor:pointer; font-size:0.95rem; padding:0 8px; color:var(--paper-dim); flex-shrink:0; }
+  .mab-attach-btn:hover{ color:var(--paper); }
+  .mab-form input[type="text"]{
+    flex:1; border:none; padding:13px 6px; font-size:0.82rem; outline:none; background:var(--void); color:var(--paper);
+    font-family:var(--mono);
+  }
+  .mab-form input[type="text"]::placeholder{ color:var(--steel); }
+  .mab-form button[type="submit"]{
+    background:var(--signal); color:var(--paper); border:none; padding:0 18px; height:44px; cursor:pointer;
+    font-size:0.68rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; font-family:var(--mono);
+    transition:transform .12s ease, background .12s ease;
+  }
+  .mab-form button[type="submit"]:hover{ background:var(--signal-hi); }
+  .mab-form button[type="submit"].mab-stamping{ transform:scale(0.9); background:var(--paper); color:var(--void); }
+
+  .mab-sidebar{ width:100%; background:var(--void); overflow-y:auto; display:flex; flex-direction:column; }
+  .mab-sidebar-new{
+    margin:12px; padding:10px 12px; background:var(--signal); color:var(--paper); border:none; border-radius:0;
+    font-size:0.72rem; letter-spacing:0.05em; text-transform:uppercase; cursor:pointer; text-align:left; font-family:var(--mono);
+  }
+  .mab-sidebar-list{ flex:1; overflow-y:auto; display:flex; flex-direction:column; }
+  .mab-sidebar-item{
+    padding:10px 14px; border-bottom:1px dashed var(--line); cursor:pointer; font-size:0.78rem; color:var(--paper-dim);
+    display:flex; flex-direction:column; gap:2px;
+  }
+  .mab-sidebar-item:hover{ background:var(--void-2); color:var(--paper); }
+  .mab-sidebar-item .mab-conv-title{ font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mab-sidebar-item .mab-conv-time{ font-size:0.62rem; color:var(--steel); }
+  .mab-sidebar-empty{ padding:20px 16px; font-size:0.76rem; color:var(--steel); text-align:center; }
+
+  .mab-search-panel{ width:100%; background:var(--void); overflow-y:auto; display:flex; flex-direction:column; }
+  .mab-search-bar{ display:flex; gap:8px; padding:12px; border-bottom:1px solid var(--line-strong); }
+  .mab-search-bar input{
+    flex:1; border:1px solid var(--line-strong); border-radius:0; padding:8px 10px; font-size:0.78rem; outline:none;
+    background:var(--void-2); color:var(--paper); font-family:var(--mono);
+  }
+  .mab-search-bar button{
+    background:var(--signal); color:var(--paper); border:none; border-radius:0; padding:0 14px; font-size:0.7rem;
+    letter-spacing:0.05em; text-transform:uppercase; cursor:pointer; font-family:var(--mono);
+  }
+  .mab-search-results{ flex:1; overflow-y:auto; padding:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-content:start; }
+  .mab-search-item{
+    border:1px solid var(--line-strong); border-radius:0; overflow:hidden; cursor:pointer; text-decoration:none;
+    color:var(--paper-dim); display:flex; flex-direction:column; background:var(--void-2);
+  }
+  .mab-search-item:hover{ border-color:var(--paper-dim); }
+  .mab-search-item .mab-search-thumb{
+    width:100%; height:90px; background:var(--void); display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  .mab-search-item .mab-search-thumb img{ width:100%; height:100%; object-fit:cover; }
+  .mab-search-item .mab-search-name{ font-size:0.66rem; padding:6px 8px; line-height:1.3; word-break:break-word; }
+  .mab-search-empty{ padding:24px 16px; font-size:0.76rem; color:var(--steel); text-align:center; grid-column:1 / -1; }
+
+  .mab-generate-panel{ width:100%; background:var(--void); overflow-y:auto; display:flex; flex-direction:column; }
+  .mab-gen-tabs{ display:flex; border-bottom:1px solid var(--line-strong); overflow-x:auto; }
+  .mab-gen-tab{
+    flex:1; background:none; border:none; padding:10px 6px; font-size:0.66rem; letter-spacing:0.03em;
+    text-transform:uppercase; cursor:pointer; color:var(--steel); border-bottom:2px solid transparent; font-family:var(--mono);
+    white-space:nowrap;
+  }
+  .mab-gen-tab.active{ color:var(--paper); border-bottom-color:var(--signal); font-weight:700; }
+  .mab-gen-view{ display:flex; flex-direction:column; gap:8px; padding:14px; }
+  .mab-gen-view select, .mab-gen-view textarea, .mab-gen-view input[type="text"], .mab-gen-view input[type="number"]{
+    width:100%; border:1px solid var(--line-strong); border-radius:0; padding:8px 10px; font-size:0.78rem;
+    font-family:var(--mono); outline:none; resize:vertical; background:var(--void-2); color:var(--paper);
+  }
+  .mab-gen-view select:focus, .mab-gen-view textarea:focus, .mab-gen-view input:focus{ border-color:var(--paper-dim); }
+  .mab-gen-view button{
+    background:var(--signal); color:var(--paper); border:none; border-radius:0; padding:10px; font-size:0.7rem;
+    letter-spacing:0.05em; text-transform:uppercase; cursor:pointer; font-family:var(--mono); font-weight:700;
+  }
+  .mab-gen-view button:hover{ background:var(--signal-hi); }
+  .mab-gen-view button:disabled{ opacity:0.4; cursor:default; }
+  .mab-gen-doc-status, .mab-gen-img-status{ font-size:0.72rem; color:var(--steel); min-height:1em; }
+  .mab-gen-doc-output-wrap{ display:flex; flex-direction:column; gap:8px; }
+  .mab-gen-doc-output{ background:var(--void-2); }
+  .mab-gen-img-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .mab-gen-img-result img{ max-width:100%; border:1px solid var(--line-strong); }
+  .mab-gen-img-result a{ font-size:0.76rem; color:var(--brass); }
+  .mab-gen-vid-note{ font-size:0.66rem; color:var(--steel); }
+  .mab-gen-vid-result{ display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .mab-gen-vid-result video{ max-width:100%; border:1px solid var(--line-strong); }
+  .mab-gen-vid-result a{ font-size:0.76rem; color:var(--brass); }
+
+  .mab-speak-toggle.on{ color:var(--brass); }
   .mab-voice-lang-btn{
-    background:none; border:1px solid #ccc; border-radius:6px; cursor:pointer; font-size:0.66rem;
-    padding:3px 6px; color:#555; flex-shrink:0; margin-right:2px; font-family:inherit;
+    background:none; border:1px solid var(--line-strong); border-radius:0; cursor:pointer; font-size:0.62rem;
+    padding:3px 6px; color:var(--paper-dim); flex-shrink:0; margin-right:2px; font-family:var(--mono);
   }
-  .mab-voice-lang-btn:hover{ border-color:#999; }
-  .mab-mic-btn{
-    background:none; border:none; cursor:pointer; font-size:1rem; padding:0 8px; color:#555; flex-shrink:0;
-  }
-  .mab-mic-btn:hover{ color:#111; }
-  .mab-mic-btn.listening{ color:#c81d11; animation: mab-pulse 1s infinite; }
+  .mab-voice-lang-btn:hover{ border-color:var(--paper-dim); color:var(--paper); }
+  .mab-mic-btn{ background:none; border:none; cursor:pointer; font-size:0.95rem; padding:0 8px; color:var(--paper-dim); flex-shrink:0; }
+  .mab-mic-btn:hover{ color:var(--paper); }
+  .mab-mic-btn.listening{ color:var(--signal); animation: mab-pulse 1s infinite; }
   @keyframes mab-pulse{ 0%{ opacity:1; } 50%{ opacity:0.35; } 100%{ opacity:1; } }
 
   .mab-speak-btn{
-    display:inline-block; background:none; border:none; cursor:pointer; font-size:0.72rem;
-    margin-left:6px; opacity:0.55; vertical-align:middle; padding:0;
+    display:inline-block; background:none; border:none; cursor:pointer; font-size:0.7rem;
+    margin-left:6px; opacity:0.6; vertical-align:middle; padding:0; color:inherit;
   }
   .mab-speak-btn:hover{ opacity:1; }
 
-  /* ---- Phase 3: timestamps + reading time + reactions ---- */
-  .mab-msg-meta{ display:flex; align-items:center; gap:6px; font-size:0.62rem; opacity:0.5; margin-top:4px; }
+  /* ---- timestamps + reading time + reactions ---- */
+  .mab-msg-meta{ display:flex; align-items:center; gap:6px; font-size:0.6rem; opacity:0.5; margin-top:5px; letter-spacing:0.03em; }
   .mab-reactions{ display:flex; gap:4px; margin-top:6px; }
   .mab-react-btn{
-    background:none; border:1px solid transparent; border-radius:6px; cursor:pointer;
-    font-size:0.82rem; padding:1px 4px; opacity:0.55; line-height:1.3;
+    background:none; border:1px solid transparent; border-radius:0; cursor:pointer;
+    font-size:0.8rem; padding:1px 4px; opacity:0.55; line-height:1.3;
   }
-  .mab-react-btn:hover{ opacity:1; background:rgba(0,0,0,0.06); }
-  .mab-react-btn.active{ opacity:1; border-color:currentColor; background:rgba(0,0,0,0.08); }
+  .mab-react-btn:hover{ opacity:1; background:rgba(236,231,220,0.08); }
+  .mab-react-btn.active{ opacity:1; border-color:var(--signal); background:rgba(200,29,17,0.12); }
 
-  /* ---- Phase 3: chat themes ---- */
-  .mab-panel.theme-brand{ background:#0d0d0c; border-color:rgba(236,231,220,0.32); }
-  .mab-panel.theme-brand .mab-head{ background:#0d0d0c; border-bottom:1px solid rgba(236,231,220,0.18); }
-  .mab-panel.theme-brand .mab-messages{ background:#161615; }
-  .mab-panel.theme-brand .mab-msg.assistant{ background:#0d0d0c; color:#ece7dc; border:1px solid rgba(236,231,220,0.14); }
-  .mab-panel.theme-brand .mab-msg.user{ background:#c81d11; color:#ece7dc; }
-  .mab-panel.theme-brand .mab-form{ border-top:1px solid rgba(236,231,220,0.18); background:#0d0d0c; }
-  .mab-panel.theme-brand .mab-form input[type="text"]{ background:#0d0d0c; color:#ece7dc; }
-  .mab-panel.theme-light{ background:#fff; }
-  .mab-panel.theme-light .mab-head{ background:#f4f4f2; color:#111; }
-  .mab-panel.theme-light .mab-head .mab-icon-btn{ color:#555; }
-  .mab-panel.theme-light .mab-head select{ background:#fff; color:#111; border:1px solid #ccc; }
-  .mab-panel.theme-light .mab-close{ color:#555; }
-  .mab-theme-btn{
-    background:none; border:none; cursor:pointer; font-size:0.9rem; padding:2px 4px; color:#ddd;
+  /* ---- chat theme variants: same brutalist grammar, different accent/paper logic ---- */
+  .mab-panel.theme-brand{ --signal:var(--brass); --signal-hi:#c9a04f; --signal-dim:#6b5825; }
+  .mab-panel.theme-brand .mab-msg.user{ color:var(--void); }
+  .mab-panel.theme-light{
+    --void:#ece7dc; --void-2:#ddd6c4; --paper:#141310; --paper-dim:#3a362c; --steel:#8a8372;
+    --line:rgba(20,19,16,0.14); --line-strong:rgba(20,19,16,0.3);
   }
-  .mab-panel.theme-light .mab-theme-btn{ color:#555; }
+  .mab-panel.theme-light .mab-msg.user{ color:#ece7dc; }
+  .mab-panel.theme-light .mab-form button[type="submit"]{ color:#ece7dc; }
 
-  /* ---- Phase 5: gamification badge ---- */
+  /* ---- gamification badge ---- */
   .mab-badge{
-    font-size:0.62rem; padding:2px 7px; border-radius:10px; background:rgba(255,255,255,0.14);
-    color:#fff; letter-spacing:0.03em; white-space:nowrap;
+    font-size:0.6rem; padding:3px 7px; border-radius:0; border:1px solid var(--line-strong);
+    color:var(--paper-dim); letter-spacing:0.04em; white-space:nowrap;
   }
-  .mab-panel.theme-light .mab-badge{ background:#eee; color:#333; }
 
-  /* ---- Phase 2/3: share banner (read-only shared view) ---- */
+  /* ---- share banner (read-only shared view) ---- */
   .mab-share-banner{
-    background:#fff7e6; color:#7a5b00; font-size:0.72rem; padding:8px 14px; text-align:center;
-    border-bottom:1px solid #f0dca0;
+    background:var(--void-2); color:var(--brass); font-size:0.7rem; letter-spacing:0.03em; text-transform:uppercase;
+    padding:9px 14px; text-align:center; border-bottom:1px dashed var(--line-strong);
   }
 
-  /* ---- new Generate tabs: negotiate / catalog / knowledge base ---- */
+  /* ---- generate tabs: negotiate / catalog / knowledge base ---- */
   .mab-gen-neg-log{ display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto; }
-  .mab-gen-neg-log .mab-neg-line{ font-size:0.78rem; padding:6px 9px; border-radius:8px; background:#f2f2f2; }
-  .mab-gen-neg-line-buyer{ background:#e8f0ff; }
-  .mab-gen-neg-price{ font-size:0.72rem; color:#666; }
+  .mab-gen-neg-log .mab-neg-line{ font-size:0.76rem; padding:7px 9px; border:1px solid var(--line-strong); background:var(--void-2); }
+  .mab-gen-neg-line-buyer{ border-left:2px solid var(--brass); }
+  .mab-gen-neg-price{ font-size:0.7rem; color:var(--brass); }
   .mab-gen-catalog-result{ display:flex; flex-direction:column; gap:10px; }
-  .mab-gen-catalog-lang{ border:1px solid #eee; border-radius:8px; padding:8px 10px; background:#fafafa; }
-  .mab-gen-catalog-lang h4{ font-size:0.76rem; margin-bottom:4px; }
-  .mab-gen-catalog-lang p{ font-size:0.78rem; line-height:1.4; white-space:pre-wrap; margin-bottom:4px; }
-  .mab-gen-catalog-lang .mab-hashtags{ font-size:0.7rem; color:#1a1a1a; opacity:0.7; }
-  .mab-gen-kb-note{ font-size:0.7rem; color:#999; }
+  .mab-gen-catalog-lang{ border:1px solid var(--line-strong); padding:8px 10px; background:var(--void-2); }
+  .mab-gen-catalog-lang h4{ font-size:0.72rem; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.06em; color:var(--signal); }
+  .mab-gen-catalog-lang p{ font-size:0.76rem; line-height:1.4; white-space:pre-wrap; margin-bottom:4px; }
+  .mab-gen-catalog-lang .mab-hashtags{ font-size:0.68rem; color:var(--brass); opacity:0.9; }
+  .mab-gen-kb-note{ font-size:0.68rem; color:var(--steel); }
   .mab-price-row{ display:flex; gap:8px; }
   .mab-price-row input{
-    flex:1; border:1px solid #ddd; border-radius:6px; padding:8px 10px; font-size:0.82rem; outline:none;
+    flex:1; border:1px solid var(--line-strong); border-radius:0; padding:8px 10px; font-size:0.78rem; outline:none;
+    background:var(--void-2); color:var(--paper); font-family:var(--mono);
+  }
+
+  @media (max-width: 480px){
+    .mab-panel{ right:8px; bottom:78px; width:calc(100vw - 16px); max-height:calc(100vh - 100px); }
+    .mab-search-results{ grid-template-columns:1fr; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .mab-mic-btn.listening{ animation:none; }
   }
   `;
 
@@ -358,29 +443,19 @@
     panel.innerHTML = `
       <div class="mab-head">
         <div class="mab-head-top">
-          <span class="mab-head-title">Ask us anything</span>
+          <div class="mab-head-brand">
+            <span class="mab-head-title">RAWx // BOT</span>
+            <span class="mab-ticket-no"></span>
+          </div>
           <div class="mab-head-actions">
             <span class="mab-badge" title="Chats this session">&#11088; 0</span>
+            <button type="button" class="mab-menu-toggle" aria-label="Menu" aria-expanded="false" title="Menu"><span class="mab-menu-dot"></span>Menu</button>
             <button type="button" class="mab-close" aria-label="Close">&times;</button>
           </div>
         </div>
         <div class="mab-head-tools">
           <div class="mab-head-actions">
-            <button type="button" class="mab-icon-btn mab-history-toggle" aria-label="History" title="History">&#9776;</button>
-            <button type="button" class="mab-icon-btn mab-search-toggle" aria-label="Search" title="Search">&#128269;</button>
-            <button type="button" class="mab-icon-btn mab-generate-toggle" aria-label="Generate" title="Generate">&#10024;</button>
-            <span class="mab-export-wrap">
-              <button type="button" class="mab-icon-btn mab-export-toggle" aria-label="Export conversation" title="Export conversation">&#128190;</button>
-              <div class="mab-export-menu">
-                <button type="button" class="mab-export-md">Export as Markdown (.md)</button>
-                <button type="button" class="mab-export-json">Export as JSON (.json)</button>
-                <button type="button" class="mab-export-pdf">Print / Save as PDF</button>
-              </div>
-            </span>
-            <button type="button" class="mab-icon-btn mab-speak-toggle" aria-label="Auto-read replies aloud" title="Auto-read replies aloud">&#128264;</button>
-            <button type="button" class="mab-icon-btn mab-share-toggle" aria-label="Share conversation" title="Share conversation (read-only link)">&#128279;</button>
-            <button type="button" class="mab-theme-btn" aria-label="Change theme" title="Change chat theme">&#127912;</button>
-            <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
+            <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="Start a new conversation">+ New</button>
           </div>
           <div class="mab-head-actions">
             <select class="mab-personality" title="Bot personality">
@@ -395,9 +470,25 @@
               <option value="claude">Claude</option>
               <option value="gemini">Gemini</option>
               <option value="grok">Grok</option>
-              <option value="openai">ChatGPT</option>
             </select>
           </div>
+        </div>
+        <div class="mab-menu-drawer">
+          <div class="mab-menu-label">Docket — Actions</div>
+          <button type="button" class="mab-menu-item mab-history-toggle"><span class="mab-menu-ico">&#9776;</span>History</button>
+          <button type="button" class="mab-menu-item mab-search-toggle"><span class="mab-menu-ico">&#128269;</span>Search Drive files</button>
+          <button type="button" class="mab-menu-item mab-generate-toggle"><span class="mab-menu-ico">&#10024;</span>Generate</button>
+          <span class="mab-export-wrap">
+            <button type="button" class="mab-menu-item mab-export-toggle"><span class="mab-menu-ico">&#128190;</span>Export conversation</button>
+            <div class="mab-export-menu">
+              <button type="button" class="mab-export-md">Export as Markdown (.md)</button>
+              <button type="button" class="mab-export-json">Export as JSON (.json)</button>
+              <button type="button" class="mab-export-pdf">Print / Save as PDF</button>
+            </div>
+          </span>
+          <button type="button" class="mab-menu-item mab-speak-toggle"><span class="mab-menu-ico">&#128264;</span>Auto-read replies aloud</button>
+          <button type="button" class="mab-menu-item mab-share-toggle"><span class="mab-menu-ico">&#128279;</span>Share conversation</button>
+          <button type="button" class="mab-menu-item mab-theme-btn"><span class="mab-menu-ico">&#127912;</span>Change theme</button>
         </div>
       </div>
       <div class="mab-share-banner" style="display:none;"></div>
@@ -496,7 +587,7 @@
         <button type="button" class="mab-voice-lang-btn" title="Voice language (tap to switch)">EN</button>
         <button type="button" class="mab-mic-btn" aria-label="Voice input" title="Speak your message">&#127908;</button>
         <input type="text" placeholder="Type a message..." required>
-        <button type="submit">Send</button>
+        <button type="submit">Dispatch &#8594;</button>
       </form>
     `;
     document.body.appendChild(panel);
@@ -691,8 +782,12 @@
     const badgeEl = panel.querySelector(".mab-badge");
     const newChatBtn = panel.querySelector(".mab-new-chat");
     const sidebarNewBtn = panel.querySelector(".mab-sidebar-new");
+    const menuToggle = panel.querySelector(".mab-menu-toggle");
+    const menuDrawer = panel.querySelector(".mab-menu-drawer");
+    const ticketEl = panel.querySelector(".mab-ticket-no");
     const form = panel.querySelector(".mab-form");
     const input = form.querySelector("input[type='text']");
+    const submitBtn = form.querySelector("button[type='submit']");
     const providerSelect = panel.querySelector(".mab-provider");
     const personalitySelect = panel.querySelector(".mab-personality");
     const attachBtn = panel.querySelector(".mab-attach-btn");
@@ -711,6 +806,34 @@
     let history = [];
     let conversationId = localStorage.getItem(ACTIVE_CONV_KEY) || null;
     let pendingImages = []; // { mediaType, data, previewUrl, name }
+
+    // ---- Dispatch ticket ref (cosmetic, matches the site's work-order motif) ----
+    ticketEl.textContent = `Ref RXB-${getOrCreateTicketNo()}`;
+
+    // ---- MENU drawer: replaces the old crowded icon row ----
+    function closeMenuDrawer() {
+      menuDrawer.classList.remove("open");
+      menuToggle.classList.remove("open");
+      menuToggle.setAttribute("aria-expanded", "false");
+    }
+    menuToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nowOpen = !menuDrawer.classList.contains("open");
+      menuDrawer.classList.toggle("open", nowOpen);
+      menuToggle.classList.toggle("open", nowOpen);
+      menuToggle.setAttribute("aria-expanded", String(nowOpen));
+    });
+    document.addEventListener("click", (e) => {
+      if (!menuDrawer.contains(e.target) && e.target !== menuToggle && !menuToggle.contains(e.target)) {
+        closeMenuDrawer();
+      }
+    });
+    // Any action inside the drawer (except the export sub-menu, which manages
+    // its own open state) tucks the drawer away again once picked.
+    menuDrawer.querySelectorAll(".mab-menu-item").forEach((item) => {
+      if (item.classList.contains("mab-export-toggle")) return;
+      item.addEventListener("click", closeMenuDrawer);
+    });
 
     // ---- Bot personality: restore saved choice, persist on change ----
     personalitySelect.value = localStorage.getItem(PERSONALITY_KEY) || "";
@@ -802,7 +925,11 @@
     let autoSpeak = localStorage.getItem(AUTO_SPEAK_KEY) === "1";
     function renderSpeakToggle() {
       speakToggle.classList.toggle("on", autoSpeak);
-      speakToggle.innerHTML = autoSpeak ? "&#128266;" : "&#128264;";
+      const ico = speakToggle.querySelector(".mab-menu-ico");
+      const glyph = autoSpeak ? "&#128266;" : "&#128264;";
+      if (ico) ico.innerHTML = glyph;
+      else speakToggle.innerHTML = glyph;
+      speakToggle.title = autoSpeak ? "Auto-read replies aloud (on)" : "Auto-read replies aloud (off)";
     }
     renderSpeakToggle();
     speakToggle.addEventListener("click", () => {
@@ -1413,6 +1540,9 @@
       e.preventDefault();
       const text = input.value.trim();
       if (!text) return;
+
+      submitBtn.classList.add("mab-stamping");
+      setTimeout(() => submitBtn.classList.remove("mab-stamping"), 180);
 
       if (!conversationId) setActiveConversation(crypto.randomUUID());
 

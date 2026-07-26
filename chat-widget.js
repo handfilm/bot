@@ -279,6 +279,63 @@
     margin-left:6px; opacity:0.55; vertical-align:middle; padding:0;
   }
   .mab-speak-btn:hover{ opacity:1; }
+
+  /* ---- Phase 3: timestamps + reading time + reactions ---- */
+  .mab-msg-meta{ display:flex; align-items:center; gap:6px; font-size:0.62rem; opacity:0.5; margin-top:4px; }
+  .mab-reactions{ display:flex; gap:4px; margin-top:6px; }
+  .mab-react-btn{
+    background:none; border:1px solid transparent; border-radius:6px; cursor:pointer;
+    font-size:0.82rem; padding:1px 4px; opacity:0.55; line-height:1.3;
+  }
+  .mab-react-btn:hover{ opacity:1; background:rgba(0,0,0,0.06); }
+  .mab-react-btn.active{ opacity:1; border-color:currentColor; background:rgba(0,0,0,0.08); }
+
+  /* ---- Phase 3: chat themes ---- */
+  .mab-panel.theme-brand{ background:#0d0d0c; border-color:rgba(236,231,220,0.32); }
+  .mab-panel.theme-brand .mab-head{ background:#0d0d0c; border-bottom:1px solid rgba(236,231,220,0.18); }
+  .mab-panel.theme-brand .mab-messages{ background:#161615; }
+  .mab-panel.theme-brand .mab-msg.assistant{ background:#0d0d0c; color:#ece7dc; border:1px solid rgba(236,231,220,0.14); }
+  .mab-panel.theme-brand .mab-msg.user{ background:#c81d11; color:#ece7dc; }
+  .mab-panel.theme-brand .mab-form{ border-top:1px solid rgba(236,231,220,0.18); background:#0d0d0c; }
+  .mab-panel.theme-brand .mab-form input[type="text"]{ background:#0d0d0c; color:#ece7dc; }
+  .mab-panel.theme-light{ background:#fff; }
+  .mab-panel.theme-light .mab-head{ background:#f4f4f2; color:#111; }
+  .mab-panel.theme-light .mab-head .mab-icon-btn{ color:#555; }
+  .mab-panel.theme-light .mab-head select{ background:#fff; color:#111; border:1px solid #ccc; }
+  .mab-panel.theme-light .mab-close{ color:#555; }
+  .mab-theme-btn{
+    background:none; border:none; cursor:pointer; font-size:0.9rem; padding:2px 4px; color:#ddd;
+  }
+  .mab-panel.theme-light .mab-theme-btn{ color:#555; }
+
+  /* ---- Phase 5: gamification badge ---- */
+  .mab-badge{
+    font-size:0.62rem; padding:2px 7px; border-radius:10px; background:rgba(255,255,255,0.14);
+    color:#fff; letter-spacing:0.03em; white-space:nowrap;
+  }
+  .mab-panel.theme-light .mab-badge{ background:#eee; color:#333; }
+
+  /* ---- Phase 2/3: share banner (read-only shared view) ---- */
+  .mab-share-banner{
+    background:#fff7e6; color:#7a5b00; font-size:0.72rem; padding:8px 14px; text-align:center;
+    border-bottom:1px solid #f0dca0;
+  }
+
+  /* ---- new Generate tabs: negotiate / catalog / knowledge base ---- */
+  .mab-gen-neg-log{ display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto; }
+  .mab-gen-neg-log .mab-neg-line{ font-size:0.78rem; padding:6px 9px; border-radius:8px; background:#f2f2f2; }
+  .mab-gen-neg-line-buyer{ background:#e8f0ff; }
+  .mab-gen-neg-price{ font-size:0.72rem; color:#666; }
+  .mab-gen-catalog-result{ display:flex; flex-direction:column; gap:10px; }
+  .mab-gen-catalog-lang{ border:1px solid #eee; border-radius:8px; padding:8px 10px; background:#fafafa; }
+  .mab-gen-catalog-lang h4{ font-size:0.76rem; margin-bottom:4px; }
+  .mab-gen-catalog-lang p{ font-size:0.78rem; line-height:1.4; white-space:pre-wrap; margin-bottom:4px; }
+  .mab-gen-catalog-lang .mab-hashtags{ font-size:0.7rem; color:#1a1a1a; opacity:0.7; }
+  .mab-gen-kb-note{ font-size:0.7rem; color:#999; }
+  .mab-price-row{ display:flex; gap:8px; }
+  .mab-price-row input{
+    flex:1; border:1px solid #ddd; border-radius:6px; padding:8px 10px; font-size:0.82rem; outline:none;
+  }
   `;
 
   function injectStyle() {
@@ -311,10 +368,13 @@
             </div>
           </span>
           <button type="button" class="mab-icon-btn mab-speak-toggle" aria-label="Auto-read replies aloud" title="Auto-read replies aloud">&#128264;</button>
+          <button type="button" class="mab-icon-btn mab-share-toggle" aria-label="Share conversation" title="Share conversation (read-only link)">&#128279;</button>
+          <button type="button" class="mab-theme-btn" aria-label="Change theme" title="Change chat theme">&#127912;</button>
           <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
         </div>
         <span class="mab-head-title">Ask us anything</span>
         <div class="mab-head-actions">
+          <span class="mab-badge" title="Chats this session">&#11088; 0</span>
           <select class="mab-personality" title="Bot personality">
             <option value="">Default</option>
             <option value="professional">Professional</option>
@@ -331,6 +391,7 @@
           <button type="button" class="mab-close" aria-label="Close">&times;</button>
         </div>
       </div>
+      <div class="mab-share-banner" style="display:none;"></div>
       <div class="mab-body">
         <div class="mab-sidebar" style="display:none;">
           <button type="button" class="mab-sidebar-new">+ New conversation</button>
@@ -348,6 +409,9 @@
             <button type="button" class="mab-gen-tab active" data-tab="document">Document</button>
             <button type="button" class="mab-gen-tab" data-tab="image">Image</button>
             <button type="button" class="mab-gen-tab" data-tab="video">Video</button>
+            <button type="button" class="mab-gen-tab" data-tab="negotiate">Negotiate</button>
+            <button type="button" class="mab-gen-tab" data-tab="catalog">Catalog</button>
+            <button type="button" class="mab-gen-tab" data-tab="kb">Knowledge</button>
           </div>
           <div class="mab-gen-view mab-gen-doc">
             <select class="mab-gen-doctype">
@@ -370,6 +434,9 @@
             <div class="mab-gen-img-result"></div>
           </div>
           <div class="mab-gen-view mab-gen-vid" style="display:none;">
+            <label style="font-size:0.76rem; display:flex; gap:6px; align-items:center;">
+              <input type="checkbox" class="mab-gen-vid-demo-mode"> Product demo mode — auto-write the marketing script from a short brief
+            </label>
             <textarea class="mab-gen-vid-prompt" rows="3" placeholder="Describe the video — e.g. 'slow pan across a rack of leather jackets in a bright showroom'"></textarea>
             <select class="mab-gen-vid-duration">
               <option value="5">5 seconds</option>
@@ -381,6 +448,33 @@
             <button type="button" class="mab-gen-vid-btn">Generate</button>
             <div class="mab-gen-vid-status"></div>
             <div class="mab-gen-vid-result"></div>
+          </div>
+          <div class="mab-gen-view mab-gen-neg" style="display:none;">
+            <textarea class="mab-gen-neg-brief" rows="2" placeholder="Product brief — e.g. '500 pcs genuine leather wallets, 3 colors'"></textarea>
+            <div class="mab-price-row">
+              <input type="number" class="mab-gen-neg-floor" placeholder="Floor price (internal, hidden)">
+              <input type="number" class="mab-gen-neg-ask" placeholder="Asking price">
+            </div>
+            <div class="mab-gen-neg-log"></div>
+            <textarea class="mab-gen-neg-buyer" rows="2" placeholder="Buyer's message — e.g. 'Can you do $4.20/pc for 500 units?'"></textarea>
+            <button type="button" class="mab-gen-neg-btn">Send</button>
+            <div class="mab-gen-neg-status"></div>
+          </div>
+          <div class="mab-gen-view mab-gen-catalog" style="display:none;">
+            <textarea class="mab-gen-catalog-brief" rows="3" placeholder="Describe the product — e.g. 'jute tote bag, natural fiber, handwoven'"></textarea>
+            <label style="font-size:0.76rem;"><input type="checkbox" class="mab-gen-catalog-lang" value="en" checked> English</label>
+            <label style="font-size:0.76rem;"><input type="checkbox" class="mab-gen-catalog-lang" value="bn"> Bengali</label>
+            <label style="font-size:0.76rem;"><input type="checkbox" class="mab-gen-catalog-lang" value="jp"> Japanese</label>
+            <button type="button" class="mab-gen-catalog-btn">Generate</button>
+            <div class="mab-gen-catalog-status"></div>
+            <div class="mab-gen-catalog-result"></div>
+          </div>
+          <div class="mab-gen-view mab-gen-kb" style="display:none;">
+            <div class="mab-gen-kb-note">Admin: paste text from past quotations, spec sheets, or price lists so the bot can answer from your real data instead of generic replies. Requires a Vectorize index bound as KB_VECTORIZE on the Worker.</div>
+            <input type="text" class="mab-gen-kb-title" placeholder="Title — e.g. 'Q3 2026 Leather Price List'">
+            <textarea class="mab-gen-kb-text" rows="5" placeholder="Paste the content here..."></textarea>
+            <button type="button" class="mab-gen-kb-btn">Add to Knowledge Base</button>
+            <div class="mab-gen-kb-status"></div>
           </div>
         </div>
         <div class="mab-messages"></div>
@@ -404,7 +498,17 @@
     return panel;
   }
 
-  function addMessage(container, role, text, providerUsed, imageCount) {
+  const REACTION_EMOJIS = ["👍", "❤️", "🔥", "😂"];
+
+  function readingTimeLabel(text) {
+    const words = (text || "").trim().split(/\s+/).filter(Boolean).length;
+    if (words === 0) return "";
+    const mins = words / 200;
+    return mins < 1 ? "<1 min read" : `${Math.ceil(mins)} min read`;
+  }
+
+  function addMessage(container, role, text, providerUsed, imageCount, opts) {
+    opts = opts || {};
     const div = document.createElement("div");
     div.className = `mab-msg ${role}`;
     let html = "";
@@ -416,9 +520,40 @@
       html += `<span class="mab-img-tag"> 📎 ${imageCount} image${imageCount > 1 ? "s" : ""}</span>`;
     }
     div.innerHTML = html;
+
+    // Phase 3: timestamp + reading time.
+    const ts = opts.timestamp || Date.now();
+    const meta = document.createElement("div");
+    meta.className = "mab-msg-meta";
+    const readTime = role === "assistant" ? readingTimeLabel(text) : "";
+    meta.textContent = readTime ? `${formatTime(ts)} · ${readTime}` : formatTime(ts);
+    div.appendChild(meta);
+
     if (role === "assistant" && text) {
       addSpeakButton(div, text);
     }
+
+    // Phase 3: reaction buttons — only wired up when the caller supplies
+    // onReact (i.e. we know this message's index + have somewhere to save it).
+    if (role === "assistant" && typeof opts.onReact === "function") {
+      const row = document.createElement("div");
+      row.className = "mab-reactions";
+      REACTION_EMOJIS.forEach((emoji) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "mab-react-btn" + (opts.reaction === emoji ? " active" : "");
+        btn.textContent = emoji;
+        btn.addEventListener("click", () => {
+          const isActive = btn.classList.contains("active");
+          row.querySelectorAll(".mab-react-btn").forEach((b) => b.classList.remove("active"));
+          if (!isActive) btn.classList.add("active");
+          opts.onReact(isActive ? null : emoji);
+        });
+        row.appendChild(btn);
+      });
+      div.appendChild(row);
+    }
+
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     return div;
@@ -518,9 +653,33 @@
     const genVidView = panel.querySelector(".mab-gen-vid");
     const genVidPrompt = panel.querySelector(".mab-gen-vid-prompt");
     const genVidDuration = panel.querySelector(".mab-gen-vid-duration");
+    const genVidDemoMode = panel.querySelector(".mab-gen-vid-demo-mode");
     const genVidBtn = panel.querySelector(".mab-gen-vid-btn");
     const genVidStatus = panel.querySelector(".mab-gen-vid-status");
     const genVidResult = panel.querySelector(".mab-gen-vid-result");
+    const genNegView = panel.querySelector(".mab-gen-neg");
+    const genNegBrief = panel.querySelector(".mab-gen-neg-brief");
+    const genNegFloor = panel.querySelector(".mab-gen-neg-floor");
+    const genNegAsk = panel.querySelector(".mab-gen-neg-ask");
+    const genNegLog = panel.querySelector(".mab-gen-neg-log");
+    const genNegBuyer = panel.querySelector(".mab-gen-neg-buyer");
+    const genNegBtn = panel.querySelector(".mab-gen-neg-btn");
+    const genNegStatus = panel.querySelector(".mab-gen-neg-status");
+    const genCatalogView = panel.querySelector(".mab-gen-catalog");
+    const genCatalogBrief = panel.querySelector(".mab-gen-catalog-brief");
+    const genCatalogLangs = panel.querySelectorAll(".mab-gen-catalog-lang");
+    const genCatalogBtn = panel.querySelector(".mab-gen-catalog-btn");
+    const genCatalogStatus = panel.querySelector(".mab-gen-catalog-status");
+    const genCatalogResult = panel.querySelector(".mab-gen-catalog-result");
+    const genKbView = panel.querySelector(".mab-gen-kb");
+    const genKbTitle = panel.querySelector(".mab-gen-kb-title");
+    const genKbText = panel.querySelector(".mab-gen-kb-text");
+    const genKbBtn = panel.querySelector(".mab-gen-kb-btn");
+    const genKbStatus = panel.querySelector(".mab-gen-kb-status");
+    const themeBtn = panel.querySelector(".mab-theme-btn");
+    const shareToggle = panel.querySelector(".mab-share-toggle");
+    const shareBanner = panel.querySelector(".mab-share-banner");
+    const badgeEl = panel.querySelector(".mab-badge");
     const newChatBtn = panel.querySelector(".mab-new-chat");
     const sidebarNewBtn = panel.querySelector(".mab-sidebar-new");
     const form = panel.querySelector(".mab-form");
@@ -719,9 +878,27 @@
       else localStorage.removeItem(ACTIVE_CONV_KEY);
     }
 
+    async function saveReaction(messageIndex, emoji) {
+      if (!conversationId) return;
+      try {
+        await fetch(`${ENDPOINT}/api/conversations/${encodeURIComponent(conversationId)}/react`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: SESSION_ID, messageIndex, emoji }),
+        });
+      } catch (err) {
+        console.warn("[rawx-bot-widget] reaction save failed", err);
+      }
+    }
+
     function renderHistoryIntoMessages() {
       messagesEl.innerHTML = "";
-      history.forEach((m) => addMessage(messagesEl, m.role, m.content));
+      history.forEach((m, idx) => {
+        addMessage(messagesEl, m.role, m.content, null, null, {
+          reaction: m.reaction,
+          onReact: m.role === "assistant" ? (emoji) => saveReaction(idx, emoji) : undefined,
+        });
+      });
     }
 
     function showAttachError(msg) {
@@ -904,6 +1081,9 @@
         genDocView.style.display = tabName === "document" ? "flex" : "none";
         genImgView.style.display = tabName === "image" ? "flex" : "none";
         genVidView.style.display = tabName === "video" ? "flex" : "none";
+        genNegView.style.display = tabName === "negotiate" ? "flex" : "none";
+        genCatalogView.style.display = tabName === "catalog" ? "flex" : "none";
+        genKbView.style.display = tabName === "kb" ? "flex" : "none";
       });
     });
 
@@ -979,10 +1159,15 @@
       genVidResult.innerHTML = "";
       genVidStatus.textContent = "Submitting…";
       try {
-        const startRes = await fetch(`${ENDPOINT}/api/generate/video/start`, {
+        const demoMode = genVidDemoMode.checked;
+        const startRes = await fetch(`${ENDPOINT}/api/generate/${demoMode ? "demo-video" : "video"}/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, duration: Number(genVidDuration.value) }),
+          body: JSON.stringify(
+            demoMode
+              ? { productBrief: prompt, duration: Number(genVidDuration.value) }
+              : { prompt, duration: Number(genVidDuration.value) }
+          ),
         });
         const startData = await startRes.json();
         if (!startRes.ok) throw new Error(startData.error || "couldn't start video job");
@@ -1016,6 +1201,196 @@
         genVidBtn.disabled = false;
       }
     });
+
+    // ---- Negotiate tab (Phase 3) ----
+    let negotiationHistory = [];
+    function renderNegLog() {
+      genNegLog.innerHTML = "";
+      negotiationHistory.forEach((h) => {
+        const line = document.createElement("div");
+        line.className = `mab-neg-line ${h.role === "buyer" ? "mab-gen-neg-line-buyer" : ""}`;
+        line.textContent = `${h.role === "buyer" ? "Buyer" : "You (AI)"}: ${h.text}`;
+        genNegLog.appendChild(line);
+      });
+      genNegLog.scrollTop = genNegLog.scrollHeight;
+    }
+    genNegBtn.addEventListener("click", async () => {
+      const productBrief = genNegBrief.value.trim();
+      const buyerMessage = genNegBuyer.value.trim();
+      if (!productBrief || !buyerMessage) return;
+      genNegBtn.disabled = true;
+      genNegStatus.textContent = "Thinking…";
+      negotiationHistory.push({ role: "buyer", text: buyerMessage });
+      renderNegLog();
+      try {
+        const res = await fetch(`${ENDPOINT}/api/negotiate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            productBrief,
+            floorPrice: genNegFloor.value ? Number(genNegFloor.value) : null,
+            askPrice: genNegAsk.value ? Number(genNegAsk.value) : null,
+            buyerMessage,
+            negotiationHistory,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "negotiation failed");
+        negotiationHistory.push({ role: "seller", text: data.reply });
+        renderNegLog();
+        genNegBuyer.value = "";
+        genNegStatus.innerHTML = data.suggestedPrice
+          ? `<span class="mab-gen-neg-price">Suggested price: ${data.suggestedPrice} — status: ${data.status}</span>`
+          : `<span class="mab-gen-neg-price">Status: ${data.status}</span>`;
+      } catch (err) {
+        genNegStatus.textContent = "Couldn't reach the negotiator — try again.";
+        console.warn("[rawx-bot-widget]", err);
+      } finally {
+        genNegBtn.disabled = false;
+      }
+    });
+
+    // ---- Catalog tab (Phase 4) ----
+    genCatalogBtn.addEventListener("click", async () => {
+      const brief = genCatalogBrief.value.trim();
+      const languages = Array.from(genCatalogLangs).filter((c) => c.checked).map((c) => c.value);
+      if (!brief || languages.length === 0) return;
+      genCatalogBtn.disabled = true;
+      genCatalogStatus.textContent = "Generating…";
+      genCatalogResult.innerHTML = "";
+      try {
+        const res = await fetch(`${ENDPOINT}/api/generate/catalog`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brief, languages }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "generation failed");
+        genCatalogStatus.textContent = "";
+        Object.entries(data.languages || {}).forEach(([lang, content]) => {
+          const block = document.createElement("div");
+          block.className = "mab-gen-catalog-lang";
+          const label = { en: "English", bn: "Bengali", jp: "Japanese" }[lang] || lang;
+          block.innerHTML = `<h4>${label}</h4><p></p><div class="mab-hashtags"></div>`;
+          block.querySelector("p").textContent = content.description || "";
+          block.querySelector(".mab-hashtags").textContent = (content.hashtags || []).join(" ");
+          genCatalogResult.appendChild(block);
+        });
+      } catch (err) {
+        genCatalogStatus.textContent = "Couldn't generate — try again.";
+        console.warn("[rawx-bot-widget]", err);
+      } finally {
+        genCatalogBtn.disabled = false;
+      }
+    });
+
+    // ---- Knowledge Base tab (Phase 2 RAG) ----
+    genKbBtn.addEventListener("click", async () => {
+      const title = genKbTitle.value.trim();
+      const text = genKbText.value.trim();
+      if (!text) return;
+      genKbBtn.disabled = true;
+      genKbStatus.textContent = "Indexing…";
+      try {
+        const res = await fetch(`${ENDPOINT}/api/kb/upload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "upload failed");
+        genKbStatus.textContent = `Added ${data.chunksIndexed} chunk(s) to the knowledge base.`;
+        genKbTitle.value = "";
+        genKbText.value = "";
+      } catch (err) {
+        genKbStatus.textContent = `Couldn't index: ${err.message}`;
+        console.warn("[rawx-bot-widget]", err);
+      } finally {
+        genKbBtn.disabled = false;
+      }
+    });
+
+    // ---- Chat themes (Phase 3) ----
+    const THEMES = ["dark", "brand", "light"];
+    const THEME_KEY = "mab_theme";
+    function applyTheme(theme) {
+      panel.classList.remove("theme-dark", "theme-brand", "theme-light");
+      if (theme !== "dark") panel.classList.add(`theme-${theme}`);
+      localStorage.setItem(THEME_KEY, theme);
+    }
+    applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+    themeBtn.addEventListener("click", () => {
+      const current = localStorage.getItem(THEME_KEY) || "dark";
+      const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
+      applyTheme(next);
+    });
+
+    // ---- Gamification (Phase 5, lite) ----
+    const POINTS_KEY = "mab_points";
+    function getPoints() { return Number(localStorage.getItem(POINTS_KEY) || 0); }
+    function addPoint() {
+      const pts = getPoints() + 1;
+      localStorage.setItem(POINTS_KEY, String(pts));
+      badgeEl.innerHTML = `&#11088; ${pts}`;
+      return pts;
+    }
+    badgeEl.innerHTML = `&#11088; ${getPoints()}`;
+
+    // ---- Share (Phase 3, lite read-only link) ----
+    shareToggle.addEventListener("click", async () => {
+      if (!conversationId) {
+        alert("Send at least one message first, then share the conversation.");
+        return;
+      }
+      try {
+        const res = await fetch(`${ENDPOINT}/api/conversations/${encodeURIComponent(conversationId)}/share`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: SESSION_ID }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "couldn't create share link");
+        const shareUrl = `${location.origin}${location.pathname}?share=${data.shareId}`;
+        try {
+          await navigator.clipboard.writeText(shareUrl);
+          alert(`Read-only share link copied to clipboard:\n${shareUrl}`);
+        } catch {
+          prompt("Copy this read-only share link:", shareUrl);
+        }
+      } catch (err) {
+        alert(`Couldn't create a share link: ${err.message}`);
+        console.warn("[rawx-bot-widget]", err);
+      }
+    });
+
+    // If this page was opened via a share link (?share=ID), render a
+    // read-only, auto-polling view of that conversation instead of the
+    // normal interactive chat.
+    const sharedId = new URLSearchParams(location.search).get("share");
+    if (sharedId) {
+      form.style.display = "none";
+      generateToggle.style.display = "none";
+      searchToggle.style.display = "none";
+      historyToggle.style.display = "none";
+      shareToggle.style.display = "none";
+      shareBanner.style.display = "block";
+      shareBanner.textContent = "Viewing a shared conversation (read-only) — updates automatically.";
+      panel.classList.add("open");
+      const pollShared = async () => {
+        try {
+          const res = await fetch(`${ENDPOINT}/api/shared/${encodeURIComponent(sharedId)}`);
+          const data = await res.json();
+          if (res.ok) {
+            history = data.messages || [];
+            renderHistoryIntoMessages();
+          }
+        } catch (err) {
+          console.warn("[rawx-bot-widget] shared poll failed", err);
+        }
+      };
+      pollShared();
+      setInterval(pollShared, 5000);
+    }
 
     newChatBtn.addEventListener("click", startNewConversation);
     sidebarNewBtn.addEventListener("click", startNewConversation);
@@ -1069,8 +1444,12 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "request failed");
         thinking.remove();
-        addMessage(messagesEl, "assistant", data.text, data.providerUsed);
+        const assistantIdx = history.length;
+        addMessage(messagesEl, "assistant", data.text, data.providerUsed, null, {
+          onReact: (emoji) => saveReaction(assistantIdx, emoji),
+        });
         history.push({ role: "assistant", content: data.text });
+        addPoint();
         if (autoSpeak) speak(data.text);
       } catch (err) {
         thinking.remove();
@@ -1132,9 +1511,32 @@
             }
           }
         }
+        const assistantIdx = history.length;
         history.push({ role: "assistant", content: fullText });
         if (fullText) {
           addSpeakButton(bubble, fullText);
+          const meta = document.createElement("div");
+          meta.className = "mab-msg-meta";
+          const readTime = readingTimeLabel(fullText);
+          meta.textContent = readTime ? `${formatTime(Date.now())} · ${readTime}` : formatTime(Date.now());
+          bubble.appendChild(meta);
+          const row = document.createElement("div");
+          row.className = "mab-reactions";
+          REACTION_EMOJIS.forEach((emoji) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "mab-react-btn";
+            btn.textContent = emoji;
+            btn.addEventListener("click", () => {
+              const isActive = btn.classList.contains("active");
+              row.querySelectorAll(".mab-react-btn").forEach((b) => b.classList.remove("active"));
+              if (!isActive) btn.classList.add("active");
+              saveReaction(assistantIdx, isActive ? null : emoji);
+            });
+            row.appendChild(btn);
+          });
+          bubble.appendChild(row);
+          addPoint();
           if (autoSpeak) speak(fullText);
         }
       } catch (err) {

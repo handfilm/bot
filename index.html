@@ -7,7 +7,7 @@
 <meta name="description" content="RAWx BOT — triple-engine dispatch terminal. Ask, Create, Deploy. Routed live across Claude, Gemini and Grok.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700;800&family=Noto+Sans+Bengali:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700;900&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
   :root{
     --void:#0d0d0c;
@@ -61,10 +61,12 @@
   /* ---------- top bar ---------- */
   .topbar{
     position:relative; z-index:5;
-    display:flex; align-items:center; justify-content:space-between;
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap;
     padding:20px 28px;
     border-bottom:1px solid var(--line);
   }
+  .topbar-right{ display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
   .mark{
     font-family:var(--stamp);
     font-size:1.15rem;
@@ -85,6 +87,39 @@
     display:flex; gap:18px;
   }
   .status-line span{ color:var(--paper); }
+  .lang-switch{
+    background:var(--void-2); color:var(--paper); border:1px solid var(--line-strong);
+    font-family:var(--mono); font-size:0.68rem; letter-spacing:0.04em; text-transform:uppercase;
+    padding:7px 8px; cursor:pointer; appearance:none; -webkit-appearance:none;
+  }
+  .lang-switch:hover{ border-color:var(--paper-dim); }
+  .lang-switch:focus{ outline:1px solid var(--signal); outline-offset:1px; }
+
+  /* ---------- non-Latin script support ---------- */
+  html[lang="bn"] body{ font-family:'Noto Sans Bengali', var(--mono), sans-serif; }
+  html[lang="ja"] body{ font-family:'Noto Sans JP', var(--mono), sans-serif; }
+  html[lang="zh"] body{ font-family:'Noto Sans SC', var(--mono), sans-serif; }
+  html[lang="bn"] h1.stamp, html[lang="bn"] .manifest-head h2, html[lang="bn"] .ticket h3, html[lang="bn"] .engines h2{
+    font-family:'Noto Sans Bengali', sans-serif; font-weight:700;
+  }
+  html[lang="ja"] h1.stamp, html[lang="ja"] .manifest-head h2, html[lang="ja"] .ticket h3, html[lang="ja"] .engines h2{
+    font-family:'Noto Sans JP', sans-serif; font-weight:900;
+  }
+  html[lang="zh"] h1.stamp, html[lang="zh"] .manifest-head h2, html[lang="zh"] .ticket h3, html[lang="zh"] .engines h2{
+    font-family:'Noto Sans SC', sans-serif; font-weight:900;
+  }
+  html[lang="bn"] .eyebrow, html[lang="ja"] .eyebrow, html[lang="zh"] .eyebrow,
+  html[lang="bn"] .status-line, html[lang="ja"] .status-line, html[lang="zh"] .status-line,
+  html[lang="bn"] .lot, html[lang="ja"] .lot, html[lang="zh"] .lot,
+  html[lang="bn"] .glyph, html[lang="ja"] .glyph, html[lang="zh"] .glyph,
+  html[lang="bn"] .ref, html[lang="ja"] .ref, html[lang="zh"] .ref,
+  html[lang="bn"] footer, html[lang="ja"] footer, html[lang="zh"] footer,
+  html[lang="bn"] h1.stamp, html[lang="ja"] h1.stamp, html[lang="zh"] h1.stamp,
+  html[lang="bn"] .manifest-head h2, html[lang="ja"] .manifest-head h2, html[lang="zh"] .manifest-head h2,
+  html[lang="bn"] .ticket h3, html[lang="ja"] .ticket h3, html[lang="zh"] .ticket h3,
+  html[lang="bn"] .engines h2, html[lang="ja"] .engines h2, html[lang="zh"] .engines h2{
+    letter-spacing:0.01em; text-transform:none;
+  }
 
   /* ---------- hero ---------- */
   .hero{
@@ -251,73 +286,85 @@
 
 <header class="topbar">
   <div class="mark"><span class="dot"></span>RAWx // BOT</div>
-  <div class="status-line">
-    <div>ENGINES <span>03 ACTIVE</span></div>
-    <div>STATUS <span>ONLINE</span></div>
+  <div class="topbar-right">
+    <div class="status-line">
+      <div><span data-i18n="status_engines_label">Engines</span> <span data-i18n="status_engines_value">03 Active</span></div>
+      <div><span data-i18n="status_status_label">Status</span> <span data-i18n="status_status_value">Online</span></div>
+    </div>
+    <select class="lang-switch" id="lang-select" aria-label="Language">
+      <option value="en">English</option>
+      <option value="bn">বাংলা</option>
+      <option value="ja">日本語</option>
+      <option value="nl">Nederlands</option>
+      <option value="de">Deutsch</option>
+      <option value="fr">Français</option>
+      <option value="es">Español</option>
+      <option value="zh">中文</option>
+    </select>
   </div>
 </header>
 
 <section class="hero">
-  <div class="eyebrow">Dispatch Terminal — Handled &amp; Head Group</div>
-  <h1 class="stamp">ASK<span class="accent">.</span> CREATE<span class="accent">.</span> DEPLOY<span class="accent">.</span></h1>
-  <p class="hero-sub">A single terminal routes every message across three engines — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — the way a work order moves through a floor: intake, fabrication, shipment. No queue, no wrong desk. The router picks the right hand for the job.</p>
+  <div class="eyebrow" data-i18n="hero_eyebrow">Dispatch Terminal — Hands &amp; Head Group</div>
+  <h1 class="stamp"><span data-i18n="hero_ask">Ask</span><span class="accent">.</span> <span data-i18n="hero_create">Create</span><span class="accent">.</span> <span data-i18n="hero_deploy">Deploy</span><span class="accent">.</span></h1>
+  <p class="hero-sub" data-i18n-html="hero_sub">A single terminal routes every message across three engines — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — the way a work order moves through a floor: intake, fabrication, shipment. No queue, no wrong desk. The router picks the right hand for the job.</p>
   <div class="hero-cta">
-    <button class="btn primary" id="open-terminal">Open Terminal ↗</button>
-    <a class="btn" href="#manifest">View Manifest</a>
+    <button class="btn primary" id="open-terminal" data-i18n="cta_open">Open Terminal ↗</button>
+    <a class="btn" href="#manifest" data-i18n="cta_manifest">View Manifest</a>
   </div>
 </section>
 
 <section class="manifest" id="manifest">
   <div class="manifest-head">
-    <h2>Work Order — 3 Stage</h2>
-    <div class="ref">DISPATCH REF: RXB-2026-07</div>
+    <h2 data-i18n="manifest_h2">Work Order — 3 Stage</h2>
+    <div class="ref"><span data-i18n="manifest_ref_label">Dispatch Ref:</span> RXB-2026-07</div>
   </div>
 
   <div class="tickets">
     <div class="ticket">
-      <div class="glyph">01 / IN</div>
-      <div class="lot">TICKET — ASK</div>
-      <h3>Intake</h3>
-      <p>Put the question, spec, or draft on the floor as-is — a buyer query, a product brief, a line of copy. The terminal reads it and picks the desk built for it.</p>
+      <div class="glyph" data-i18n="t1_glyph">01 / In</div>
+      <div class="lot" data-i18n="t1_lot">Ticket — Ask</div>
+      <h3 data-i18n="t1_h3">Intake</h3>
+      <p data-i18n="t1_p">Put the question, spec, or draft on the floor as-is — a buyer query, a product brief, a line of copy. The terminal reads it and picks the desk built for it.</p>
       <div class="ticket-arrow">→</div>
     </div>
     <div class="ticket">
-      <div class="glyph">02 / WIP</div>
-      <div class="lot">TICKET — CREATE</div>
-      <h3>Fabrication</h3>
-      <p>The routed engine builds the response — copy, code, a spec sheet, a reasoned answer — streamed back as it's made, not held until finished.</p>
+      <div class="glyph" data-i18n="t2_glyph">02 / WIP</div>
+      <div class="lot" data-i18n="t2_lot">Ticket — Create</div>
+      <h3 data-i18n="t2_h3">Fabrication</h3>
+      <p data-i18n="t2_p">The routed engine builds the response — copy, code, a spec sheet, a reasoned answer — streamed back as it's made, not held until finished.</p>
       <div class="ticket-arrow">→</div>
     </div>
     <div class="ticket">
-      <div class="glyph">03 / OUT</div>
-      <div class="lot">TICKET — DEPLOY</div>
-      <h3>Shipment</h3>
-      <p>The finished piece lands in the thread, ready to copy, send, or paste straight into the next system. No extra handling before it ships.</p>
+      <div class="glyph" data-i18n="t3_glyph">03 / Out</div>
+      <div class="lot" data-i18n="t3_lot">Ticket — Deploy</div>
+      <h3 data-i18n="t3_h3">Shipment</h3>
+      <p data-i18n="t3_p">The finished piece lands in the thread, ready to copy, send, or paste straight into the next system. No extra handling before it ships.</p>
     </div>
   </div>
 </section>
 
 <section class="engines">
-  <h2>Engine Roster</h2>
+  <h2 data-i18n="engines_h2">Engine Roster</h2>
   <div class="engine-grid">
     <div class="engine">
       <div class="name"><span class="led"></span>CLAUDE — ANTHROPIC</div>
-      <div class="role">Default desk. Reasoning, writing, careful replies, long threads.</div>
+      <div class="role" data-i18n="e_claude_role">Default desk. Reasoning, writing, careful replies, long threads.</div>
     </div>
     <div class="engine">
       <div class="name"><span class="led"></span>GEMINI — GOOGLE</div>
-      <div class="role">Routed for images, documents, files, and multimodal intake.</div>
+      <div class="role" data-i18n="e_gemini_role">Routed for images, documents, files, and multimodal intake.</div>
     </div>
     <div class="engine">
       <div class="name"><span class="led"></span>GROK — XAI</div>
-      <div class="role">Routed for live/current queries — news, prices, right-now facts.</div>
+      <div class="role" data-i18n="e_grok_role">Routed for live/current queries — news, prices, right-now facts.</div>
     </div>
   </div>
 </section>
 
 <footer>
   <div>&copy; 2026 <b>HANDS &amp; HEAD GROUP</b> — RAWx Division</div>
-  <div>Terminal build RXB-01 — three-engine fallback chain</div>
+  <div data-i18n="footer_line2">Terminal build RXB-01 — three-engine fallback chain</div>
 </footer>
 
 <!-- Multi-AI Chatbot Configuration & Script -->
@@ -336,6 +383,211 @@
   // Note: chat-widget.js now carries its own brutalist "dispatch terminal"
   // theme natively (void/paper/signal tokens, JetBrains Mono, hard edges,
   // menu drawer, dispatch ticket ref) — no re-theme patch needed here.
+</script>
+
+<!-- i18n: language switch is wired up here — the select above had no
+     handler before; this adds the dictionary + the swap logic. -->
+<script>
+(function(){
+  var I18N = {
+    en: {
+      status_engines_label: "Engines", status_engines_value: "03 Active",
+      status_status_label: "Status", status_status_value: "Online",
+      hero_eyebrow: "Dispatch Terminal — Hands &amp; Head Group",
+      hero_ask: "Ask", hero_create: "Create", hero_deploy: "Deploy",
+      hero_sub: "A single terminal routes every message across three engines — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — the way a work order moves through a floor: intake, fabrication, shipment. No queue, no wrong desk. The router picks the right hand for the job.",
+      cta_open: "Open Terminal ↗", cta_manifest: "View Manifest",
+      manifest_h2: "Work Order — 3 Stage", manifest_ref_label: "Dispatch Ref:",
+      t1_glyph: "01 / In", t1_lot: "Ticket — Ask", t1_h3: "Intake",
+      t1_p: "Put the question, spec, or draft on the floor as-is — a buyer query, a product brief, a line of copy. The terminal reads it and picks the desk built for it.",
+      t2_glyph: "02 / WIP", t2_lot: "Ticket — Create", t2_h3: "Fabrication",
+      t2_p: "The routed engine builds the response — copy, code, a spec sheet, a reasoned answer — streamed back as it's made, not held until finished.",
+      t3_glyph: "03 / Out", t3_lot: "Ticket — Deploy", t3_h3: "Shipment",
+      t3_p: "The finished piece lands in the thread, ready to copy, send, or paste straight into the next system. No extra handling before it ships.",
+      engines_h2: "Engine Roster",
+      e_claude_role: "Default desk. Reasoning, writing, careful replies, long threads.",
+      e_gemini_role: "Routed for images, documents, files, and multimodal intake.",
+      e_grok_role: "Routed for live/current queries — news, prices, right-now facts.",
+      footer_line2: "Terminal build RXB-01 — three-engine fallback chain"
+    },
+    bn: {
+      status_engines_label: "ইঞ্জিন", status_engines_value: "০৩ সক্রিয়",
+      status_status_label: "স্ট্যাটাস", status_status_value: "অনলাইন",
+      hero_eyebrow: "ডিসপ্যাচ টার্মিনাল — হ্যান্ডস অ্যান্ড হেড গ্রুপ",
+      hero_ask: "জিজ্ঞাসা", hero_create: "তৈরি", hero_deploy: "স্থাপন",
+      hero_sub: "একটি মাত্র টার্মিনাল প্রতিটি বার্তা তিনটি ইঞ্জিনে পাঠায় — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — ঠিক যেমন একটি ওয়ার্ক অর্ডার কারখানার মেঝে দিয়ে চলে: গ্রহণ, নির্মাণ, প্রেরণ। কোনো সারি নেই, ভুল ডেস্কে যাওয়ার সুযোগ নেই। রাউটার সঠিক হাত বেছে নেয়।",
+      cta_open: "টার্মিনাল খুলুন ↗", cta_manifest: "ম্যানিফেস্ট দেখুন",
+      manifest_h2: "ওয়ার্ক অর্ডার — ৩ পর্যায়", manifest_ref_label: "ডিসপ্যাচ রেফ:",
+      t1_glyph: "০১ / ইন", t1_lot: "টিকিট — জিজ্ঞাসা", t1_h3: "গ্রহণ",
+      t1_p: "প্রশ্ন, স্পেক, বা খসড়া যেমন আছে তেমনই মেঝেতে রাখুন — একটি ক্রেতার প্রশ্ন, একটি প্রোডাক্ট ব্রিফ, একটি লাইন কপি। টার্মিনাল এটি পড়ে এবং এর জন্য তৈরি ডেস্ক বেছে নেয়।",
+      t2_glyph: "০২ / চলমান", t2_lot: "টিকিট — তৈরি", t2_h3: "নির্মাণ",
+      t2_p: "রাউট করা ইঞ্জিন উত্তরটি তৈরি করে — কপি, কোড, একটি স্পেক শিট, একটি যুক্তিসঙ্গত উত্তর — তৈরি হওয়ার সাথে সাথেই প্রবাহিত হয়, শেষ হওয়া পর্যন্ত আটকে রাখা হয় না।",
+      t3_glyph: "০৩ / আউট", t3_lot: "টিকিট — স্থাপন", t3_h3: "প্রেরণ",
+      t3_p: "সমাপ্ত অংশটি থ্রেডে পৌঁছায়, কপি করতে, পাঠাতে বা পরবর্তী সিস্টেমে সরাসরি পেস্ট করতে প্রস্তুত। পাঠানোর আগে কোনো অতিরিক্ত হ্যান্ডলিং নেই।",
+      engines_h2: "ইঞ্জিন রোস্টার",
+      e_claude_role: "ডিফল্ট ডেস্ক। যুক্তি, লেখা, সতর্ক উত্তর, দীর্ঘ থ্রেড।",
+      e_gemini_role: "ছবি, নথি, ফাইল এবং মাল্টিমোডাল ইনটেকের জন্য রাউট করা।",
+      e_grok_role: "লাইভ/বর্তমান প্রশ্নের জন্য রাউট করা — খবর, দাম, এখনকার তথ্য।",
+      footer_line2: "টার্মিনাল বিল্ড RXB-01 — তিন-ইঞ্জিন ফলব্যাক চেইন"
+    },
+    ja: {
+      status_engines_label: "エンジン", status_engines_value: "稼働中 03",
+      status_status_label: "状態", status_status_value: "オンライン",
+      hero_eyebrow: "ディスパッチ端末 — ハンズ・アンド・ヘッド・グループ",
+      hero_ask: "質問", hero_create: "作成", hero_deploy: "配信",
+      hero_sub: "1つの端末があらゆるメッセージを3つのエンジン — <b>Claude</b>、<b>Gemini</b>、<b>Grok</b> — に振り分ける。工場のフロアを作業指示書が流れるように：受付、加工、出荷。待ち行列も誤配送もない。ルーターが最適な担当を選ぶ。",
+      cta_open: "端末を開く ↗", cta_manifest: "マニフェストを見る",
+      manifest_h2: "作業指示書 — 3段階", manifest_ref_label: "ディスパッチ番号：",
+      t1_glyph: "01 / 受付", t1_lot: "チケット — 質問", t1_h3: "受付",
+      t1_p: "質問、仕様、下書きをそのままフロアに置く — 購入者の問い合わせ、製品概要、一行のコピーなど。端末がそれを読み取り、最適な担当を選ぶ。",
+      t2_glyph: "02 / 作業中", t2_lot: "チケット — 作成", t2_h3: "加工",
+      t2_p: "振り分けられたエンジンが応答を作成する — コピー、コード、仕様書、根拠のある回答 — 完成を待たずに作られる端から流れてくる。",
+      t3_glyph: "03 / 出荷", t3_lot: "チケット — 配信", t3_h3: "出荷",
+      t3_p: "完成したものはスレッドに届き、コピー、送信、次のシステムへの貼り付けがすぐにできる。出荷前の余分な処理はない。",
+      engines_h2: "エンジン一覧",
+      e_claude_role: "既定の担当。推論、文章作成、丁寧な返答、長い会話に。",
+      e_gemini_role: "画像、文書、ファイル、マルチモーダル入力に振り分け。",
+      e_grok_role: "最新情報の問い合わせに振り分け — ニュース、価格、リアルタイムの事実。",
+      footer_line2: "端末ビルド RXB-01 — 3エンジン・フォールバックチェーン"
+    },
+    nl: {
+      status_engines_label: "Motoren", status_engines_value: "03 Actief",
+      status_status_label: "Status", status_status_value: "Online",
+      hero_eyebrow: "Dispatch Terminal — Hands &amp; Head Group",
+      hero_ask: "Vragen", hero_create: "Maken", hero_deploy: "Inzetten",
+      hero_sub: "Eén terminal routeert elk bericht over drie engines — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — zoals een werkorder door een werkvloer beweegt: aanname, fabricage, verzending. Geen wachtrij, geen verkeerd bureau. De router kiest de juiste hand voor de klus.",
+      cta_open: "Terminal openen ↗", cta_manifest: "Bekijk manifest",
+      manifest_h2: "Werkorder — 3 fasen", manifest_ref_label: "Dispatch-ref:",
+      t1_glyph: "01 / In", t1_lot: "Ticket — Vragen", t1_h3: "Aanname",
+      t1_p: "Zet de vraag, specificatie of concept ongewijzigd op de vloer — een klantvraag, een productbrief, een regel tekst. De terminal leest het en kiest het juiste bureau.",
+      t2_glyph: "02 / In bewerking", t2_lot: "Ticket — Maken", t2_h3: "Fabricage",
+      t2_p: "De gerouteerde engine bouwt het antwoord — tekst, code, een specificatieblad, een onderbouwd antwoord — direct gestreamd terwijl het wordt gemaakt, niet vastgehouden tot het klaar is.",
+      t3_glyph: "03 / Uit", t3_lot: "Ticket — Inzetten", t3_h3: "Verzending",
+      t3_p: "Het afgeronde resultaat komt in de thread terecht, klaar om te kopiëren, te versturen of direct in het volgende systeem te plakken. Geen extra verwerking voor verzending.",
+      engines_h2: "Overzicht engines",
+      e_claude_role: "Standaardbureau. Redeneren, schrijven, zorgvuldige antwoorden, lange threads.",
+      e_gemini_role: "Gerouteerd voor afbeeldingen, documenten, bestanden en multimodale invoer.",
+      e_grok_role: "Gerouteerd voor actuele vragen — nieuws, prijzen, real-time feiten.",
+      footer_line2: "Terminal build RXB-01 — drievoudige fallback-keten"
+    },
+    de: {
+      status_engines_label: "Engines", status_engines_value: "03 Aktiv",
+      status_status_label: "Status", status_status_value: "Online",
+      hero_eyebrow: "Dispatch-Terminal — Hands &amp; Head Group",
+      hero_ask: "Fragen", hero_create: "Erstellen", hero_deploy: "Bereitstellen",
+      hero_sub: "Ein einziges Terminal leitet jede Nachricht an drei Engines weiter — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — so wie ein Arbeitsauftrag durch eine Werkshalle läuft: Annahme, Fertigung, Versand. Keine Warteschlange, kein falscher Schreibtisch. Der Router wählt die richtige Hand für die Aufgabe.",
+      cta_open: "Terminal öffnen ↗", cta_manifest: "Manifest ansehen",
+      manifest_h2: "Arbeitsauftrag — 3 Stufen", manifest_ref_label: "Dispatch-Ref.:",
+      t1_glyph: "01 / Ein", t1_lot: "Ticket — Fragen", t1_h3: "Annahme",
+      t1_p: "Frage, Spezifikation oder Entwurf unverändert auf den Tisch legen — eine Kundenanfrage, ein Produktbriefing, eine Textzeile. Das Terminal liest es und wählt den passenden Schreibtisch.",
+      t2_glyph: "02 / In Arbeit", t2_lot: "Ticket — Erstellen", t2_h3: "Fertigung",
+      t2_p: "Die zugewiesene Engine erstellt die Antwort — Text, Code, ein Datenblatt, eine fundierte Antwort — und streamt sie, während sie entsteht, statt sie bis zur Fertigstellung zurückzuhalten.",
+      t3_glyph: "03 / Aus", t3_lot: "Ticket — Bereitstellen", t3_h3: "Versand",
+      t3_p: "Das fertige Ergebnis landet im Thread, bereit zum Kopieren, Senden oder direkten Einfügen in das nächste System. Keine zusätzliche Bearbeitung vor dem Versand.",
+      engines_h2: "Engine-Übersicht",
+      e_claude_role: "Standard-Schreibtisch. Logisches Denken, Schreiben, sorgfältige Antworten, lange Threads.",
+      e_gemini_role: "Zuständig für Bilder, Dokumente, Dateien und multimodale Eingaben.",
+      e_grok_role: "Zuständig für aktuelle Anfragen — Nachrichten, Preise, Echtzeit-Fakten.",
+      footer_line2: "Terminal-Build RXB-01 — Drei-Engine-Fallback-Kette"
+    },
+    fr: {
+      status_engines_label: "Moteurs", status_engines_value: "03 Actifs",
+      status_status_label: "Statut", status_status_value: "En ligne",
+      hero_eyebrow: "Terminal de dispatch — Hands &amp; Head Group",
+      hero_ask: "Demander", hero_create: "Créer", hero_deploy: "Déployer",
+      hero_sub: "Un seul terminal achemine chaque message vers trois moteurs — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — comme un bon de travail circule dans un atelier : réception, fabrication, expédition. Pas de file d'attente, pas de mauvais poste. Le routeur choisit la bonne main pour la tâche.",
+      cta_open: "Ouvrir le terminal ↗", cta_manifest: "Voir le manifeste",
+      manifest_h2: "Bon de travail — 3 étapes", manifest_ref_label: "Réf. dispatch :",
+      t1_glyph: "01 / Entrée", t1_lot: "Ticket — Demander", t1_h3: "Réception",
+      t1_p: "Déposez la question, la spécification ou le brouillon tel quel — une demande client, un brief produit, une ligne de texte. Le terminal la lit et choisit le poste adapté.",
+      t2_glyph: "02 / En cours", t2_lot: "Ticket — Créer", t2_h3: "Fabrication",
+      t2_p: "Le moteur assigné construit la réponse — texte, code, une fiche technique, une réponse argumentée — diffusée au fur et à mesure, sans attendre la fin.",
+      t3_glyph: "03 / Sortie", t3_lot: "Ticket — Déployer", t3_h3: "Expédition",
+      t3_p: "Le résultat final arrive dans le fil, prêt à copier, envoyer ou coller directement dans le système suivant. Aucun traitement supplémentaire avant l'expédition.",
+      engines_h2: "Liste des moteurs",
+      e_claude_role: "Poste par défaut. Raisonnement, rédaction, réponses soignées, longs échanges.",
+      e_gemini_role: "Assigné pour les images, documents, fichiers et entrées multimodales.",
+      e_grok_role: "Assigné pour les requêtes en direct — actualités, prix, faits en temps réel.",
+      footer_line2: "Build du terminal RXB-01 — chaîne de secours à trois moteurs"
+    },
+    es: {
+      status_engines_label: "Motores", status_engines_value: "03 Activos",
+      status_status_label: "Estado", status_status_value: "En línea",
+      hero_eyebrow: "Terminal de despacho — Hands &amp; Head Group",
+      hero_ask: "Preguntar", hero_create: "Crear", hero_deploy: "Desplegar",
+      hero_sub: "Una sola terminal enruta cada mensaje a través de tres motores — <b>Claude</b>, <b>Gemini</b>, <b>Grok</b> — igual que una orden de trabajo recorre una planta: recepción, fabricación, envío. Sin colas, sin escritorio equivocado. El enrutador elige la mano adecuada para la tarea.",
+      cta_open: "Abrir terminal ↗", cta_manifest: "Ver manifiesto",
+      manifest_h2: "Orden de trabajo — 3 etapas", manifest_ref_label: "Ref. de despacho:",
+      t1_glyph: "01 / Entrada", t1_lot: "Ticket — Preguntar", t1_h3: "Recepción",
+      t1_p: "Coloca la pregunta, especificación o borrador tal cual — una consulta de cliente, un brief de producto, una línea de texto. La terminal la lee y elige el escritorio adecuado.",
+      t2_glyph: "02 / En proceso", t2_lot: "Ticket — Crear", t2_h3: "Fabricación",
+      t2_p: "El motor asignado construye la respuesta — texto, código, una ficha técnica, una respuesta razonada — transmitida a medida que se genera, sin retenerla hasta el final.",
+      t3_glyph: "03 / Salida", t3_lot: "Ticket — Desplegar", t3_h3: "Envío",
+      t3_p: "La pieza terminada llega al hilo, lista para copiar, enviar o pegar directamente en el siguiente sistema. Sin manejo adicional antes del envío.",
+      engines_h2: "Lista de motores",
+      e_claude_role: "Escritorio predeterminado. Razonamiento, redacción, respuestas cuidadosas, hilos largos.",
+      e_gemini_role: "Asignado para imágenes, documentos, archivos y entradas multimodales.",
+      e_grok_role: "Asignado para consultas en vivo — noticias, precios, datos en tiempo real.",
+      footer_line2: "Build de terminal RXB-01 — cadena de respaldo de tres motores"
+    },
+    zh: {
+      status_engines_label: "引擎", status_engines_value: "03 运行中",
+      status_status_label: "状态", status_status_value: "在线",
+      hero_eyebrow: "调度终端 — Hands &amp; Head Group",
+      hero_ask: "提问", hero_create: "创建", hero_deploy: "部署",
+      hero_sub: "单一终端将每条消息路由至三个引擎 — <b>Claude</b>、<b>Gemini</b>、<b>Grok</b> — 如同工单在车间流转：接收、制作、发货。没有排队,没有送错工位。路由器会选择最合适的处理者。",
+      cta_open: "打开终端 ↗", cta_manifest: "查看清单",
+      manifest_h2: "工单 — 三个阶段", manifest_ref_label: "调度编号：",
+      t1_glyph: "01 / 接收", t1_lot: "工单 — 提问", t1_h3: "接收",
+      t1_p: "将问题、需求说明或草稿原样交上来 — 客户咨询、产品简介、一段文案。终端读取后会选择合适的处理工位。",
+      t2_glyph: "02 / 进行中", t2_lot: "工单 — 创建", t2_h3: "制作",
+      t2_p: "被路由到的引擎负责生成回复 — 文案、代码、规格说明书、有依据的答案 — 边生成边传回,而不是等全部完成才返回。",
+      t3_glyph: "03 / 发出", t3_lot: "工单 — 部署", t3_h3: "发货",
+      t3_p: "完成的内容会出现在对话中,可直接复制、发送或粘贴到下一个系统。发货前不做额外处理。",
+      engines_h2: "引擎名录",
+      e_claude_role: "默认工位。推理、写作、谨慎的回复、长对话。",
+      e_gemini_role: "负责图片、文档、文件及多模态输入。",
+      e_grok_role: "负责实时/时效性查询 — 新闻、价格、当下事实。",
+      footer_line2: "终端构建 RXB-01 — 三引擎回退链"
+    }
+  };
+
+  var STORAGE_KEY = 'rawx_lang';
+  var select = document.getElementById('lang-select');
+
+  function applyLanguage(lang){
+    var dict = I18N[lang] || I18N.en;
+    document.documentElement.setAttribute('lang', lang);
+
+    document.querySelectorAll('[data-i18n]').forEach(function(el){
+      var key = el.getAttribute('data-i18n');
+      if (dict[key] !== undefined) el.textContent = dict[key];
+    });
+    document.querySelectorAll('[data-i18n-html]').forEach(function(el){
+      var key = el.getAttribute('data-i18n-html');
+      if (dict[key] !== undefined) el.innerHTML = dict[key];
+    });
+  }
+
+  function initLang(){
+    var saved = null;
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch(e){}
+    var browserLang = (navigator.language || 'en').slice(0,2);
+    var lang = saved || (I18N[browserLang] ? browserLang : 'en');
+    if (select) select.value = lang;
+    applyLanguage(lang);
+  }
+
+  if (select){
+    select.addEventListener('change', function(){
+      var lang = select.value;
+      try { localStorage.setItem(STORAGE_KEY, lang); } catch(e){}
+      applyLanguage(lang);
+    });
+  }
+
+  initLang();
+})();
 </script>
 
 </body>

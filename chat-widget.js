@@ -140,9 +140,11 @@
     font-family: system-ui, sans-serif;
   }
   .mab-panel.open{ display:flex; }
-  .mab-head{ display:flex; justify-content:space-between; align-items:center; padding:14px 16px; background:#1a1a1a; color:#fff; font-size:0.85rem; gap:8px; }
-  .mab-head-actions{ display:flex; gap:8px; align-items:center; }
-  .mab-icon-btn{ background:none; border:none; color:#ddd; cursor:pointer; font-size:0.95rem; padding:2px 4px; line-height:1; }
+  .mab-head{ display:flex; flex-direction:column; gap:8px; padding:12px 16px; background:#1a1a1a; color:#fff; font-size:0.85rem; }
+  .mab-head-top{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .mab-head-tools{ display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .mab-head-actions{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .mab-icon-btn{ background:none; border:none; color:#ddd; cursor:pointer; font-size:0.92rem; padding:2px 4px; line-height:1; }
   .mab-icon-btn:hover{ color:#fff; }
   .mab-head select{ background:#2a2a2a; color:#fff; border:1px solid #444; font-size:0.72rem; border-radius:6px; padding:4px 6px; }
   .mab-close{ background:none; border:none; color:#bbb; cursor:pointer; font-size:1rem; }
@@ -355,40 +357,46 @@
     panel.className = "mab-panel";
     panel.innerHTML = `
       <div class="mab-head">
-        <div class="mab-head-actions">
-          <button type="button" class="mab-icon-btn mab-history-toggle" aria-label="History" title="History">&#9776;</button>
-          <button type="button" class="mab-icon-btn mab-search-toggle" aria-label="Search" title="Search">&#128269;</button>
-          <button type="button" class="mab-icon-btn mab-generate-toggle" aria-label="Generate" title="Generate">&#10024;</button>
-          <span class="mab-export-wrap">
-            <button type="button" class="mab-icon-btn mab-export-toggle" aria-label="Export conversation" title="Export conversation">&#128190;</button>
-            <div class="mab-export-menu">
-              <button type="button" class="mab-export-md">Export as Markdown (.md)</button>
-              <button type="button" class="mab-export-json">Export as JSON (.json)</button>
-              <button type="button" class="mab-export-pdf">Print / Save as PDF</button>
-            </div>
-          </span>
-          <button type="button" class="mab-icon-btn mab-speak-toggle" aria-label="Auto-read replies aloud" title="Auto-read replies aloud">&#128264;</button>
-          <button type="button" class="mab-icon-btn mab-share-toggle" aria-label="Share conversation" title="Share conversation (read-only link)">&#128279;</button>
-          <button type="button" class="mab-theme-btn" aria-label="Change theme" title="Change chat theme">&#127912;</button>
-          <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
+        <div class="mab-head-top">
+          <span class="mab-head-title">Ask us anything</span>
+          <div class="mab-head-actions">
+            <span class="mab-badge" title="Chats this session">&#11088; 0</span>
+            <button type="button" class="mab-close" aria-label="Close">&times;</button>
+          </div>
         </div>
-        <span class="mab-head-title">Ask us anything</span>
-        <div class="mab-head-actions">
-          <span class="mab-badge" title="Chats this session">&#11088; 0</span>
-          <select class="mab-personality" title="Bot personality">
-            <option value="">Default</option>
-            <option value="professional">Professional</option>
-            <option value="friendly">Friendly</option>
-            <option value="expert">Product Expert</option>
-            <option value="fun">Fun</option>
-          </select>
-          <select class="mab-provider">
-            <option value="">Auto</option>
-            <option value="claude">Claude</option>
-            <option value="gemini">Gemini</option>
-            <option value="grok">Grok</option>
-          </select>
-          <button type="button" class="mab-close" aria-label="Close">&times;</button>
+        <div class="mab-head-tools">
+          <div class="mab-head-actions">
+            <button type="button" class="mab-icon-btn mab-history-toggle" aria-label="History" title="History">&#9776;</button>
+            <button type="button" class="mab-icon-btn mab-search-toggle" aria-label="Search" title="Search">&#128269;</button>
+            <button type="button" class="mab-icon-btn mab-generate-toggle" aria-label="Generate" title="Generate">&#10024;</button>
+            <span class="mab-export-wrap">
+              <button type="button" class="mab-icon-btn mab-export-toggle" aria-label="Export conversation" title="Export conversation">&#128190;</button>
+              <div class="mab-export-menu">
+                <button type="button" class="mab-export-md">Export as Markdown (.md)</button>
+                <button type="button" class="mab-export-json">Export as JSON (.json)</button>
+                <button type="button" class="mab-export-pdf">Print / Save as PDF</button>
+              </div>
+            </span>
+            <button type="button" class="mab-icon-btn mab-speak-toggle" aria-label="Auto-read replies aloud" title="Auto-read replies aloud">&#128264;</button>
+            <button type="button" class="mab-icon-btn mab-share-toggle" aria-label="Share conversation" title="Share conversation (read-only link)">&#128279;</button>
+            <button type="button" class="mab-theme-btn" aria-label="Change theme" title="Change chat theme">&#127912;</button>
+            <button type="button" class="mab-icon-btn mab-new-chat" aria-label="New chat" title="New chat">+</button>
+          </div>
+          <div class="mab-head-actions">
+            <select class="mab-personality" title="Bot personality">
+              <option value="">Default</option>
+              <option value="professional">Professional</option>
+              <option value="friendly">Friendly</option>
+              <option value="expert">Product Expert</option>
+              <option value="fun">Fun</option>
+            </select>
+            <select class="mab-provider">
+              <option value="">Auto</option>
+              <option value="claude">Claude</option>
+              <option value="gemini">Gemini</option>
+              <option value="grok">Grok</option>
+            </select>
+          </div>
         </div>
       </div>
       <div class="mab-share-banner" style="display:none;"></div>

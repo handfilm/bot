@@ -977,23 +977,37 @@
     const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognition = null;
     let recognizing = false;
+    let voiceFinalTranscript = "";
     if (SpeechRecognitionCtor) {
       recognition = new SpeechRecognitionCtor();
-      recognition.continuous = false;
-      recognition.interimResults = false;
+      // continuous + interimResults: without these, recognition stops (and
+      // discards everything after) the first short pause in speech, which
+      // is why longer sentences were only capturing the first few words.
+      recognition.continuous = true;
+      recognition.interimResults = true;
       recognition.lang = currentVoiceLang();
       recognition.addEventListener("start", () => {
         recognizing = true;
+        voiceFinalTranscript = "";
         micBtn.classList.add("listening");
       });
       recognition.addEventListener("end", () => {
         recognizing = false;
         micBtn.classList.remove("listening");
+        input.value = voiceFinalTranscript.trim();
+        input.focus();
       });
       recognition.addEventListener("result", (e) => {
-        const transcript = e.results[0][0].transcript;
-        input.value = transcript;
-        input.focus();
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const transcript = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {
+            voiceFinalTranscript += transcript + " ";
+          } else {
+            interim += transcript;
+          }
+        }
+        input.value = (voiceFinalTranscript + interim).trim();
       });
       recognition.addEventListener("error", (e) => {
         recognizing = false;

@@ -159,6 +159,10 @@
     font-family:var(--mono); color:var(--paper);
   }
   .mab-panel.open{ display:flex; }
+  .mab-panel.mab-fullscreen{
+    top:0; left:0; right:0; bottom:0; width:100vw; height:100vh;
+    max-width:100vw; max-height:100vh; border-radius:0;
+  }
 
   /* ---------- header: brand mark + ticket ref, minimal actions ---------- */
   .mab-head{
@@ -449,6 +453,7 @@
           </div>
           <div class="mab-head-actions">
             <span class="mab-badge" title="Chats this session">&#11088; 0</span>
+            <button type="button" class="mab-icon-btn mab-fullscreen-toggle" aria-label="Toggle fullscreen" title="Toggle fullscreen">&#10021;</button>
             <button type="button" class="mab-menu-toggle" aria-label="Menu" aria-expanded="false" title="Menu"><span class="mab-menu-dot"></span>Menu</button>
             <button type="button" class="mab-close" aria-label="Close">&times;</button>
           </div>
@@ -593,7 +598,17 @@
     document.body.appendChild(panel);
 
     launcher.addEventListener("click", () => panel.classList.toggle("open"));
-    panel.querySelector(".mab-close").addEventListener("click", () => panel.classList.remove("open"));
+    panel.querySelector(".mab-close").addEventListener("click", () => {
+      panel.classList.remove("open");
+      panel.classList.remove("mab-fullscreen");
+    });
+
+    const fsToggle = panel.querySelector(".mab-fullscreen-toggle");
+    fsToggle.addEventListener("click", () => {
+      const isFull = panel.classList.toggle("mab-fullscreen");
+      fsToggle.innerHTML = isFull ? "&#10539;" : "&#10021;";
+      fsToggle.title = isFull ? "Exit fullscreen" : "Toggle fullscreen";
+    });
 
     return panel;
   }

@@ -191,6 +191,19 @@ async function trackEvent(env, type, meta = {}) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Admin auth (optional) — protects the analytics + Knowledge Base admin
+// routes used by admin-dashboard.html. Set an `ADMIN_TOKEN` secret on the
+// Worker to require it; if the secret isn't set, these routes stay open
+// (matches this project's convention: features no-op gracefully when their
+// own config is missing, rather than breaking anything).
+// Dashboard sends the token as a `?token=` query param.
+// ---------------------------------------------------------------------------
+function checkAdminAuth(env, url) {
+  if (!env.ADMIN_TOKEN) return true;
+  return url.searchParams.get("token") === env.ADMIN_TOKEN;
+}
+
 async function getAnalyticsSummary(env, days) {
   const numDays = Math.min(Math.max(Number(days) || 7, 1), ANALYTICS_RETENTION_DAYS);
   const now = new Date();
@@ -295,17 +308,42 @@ async function kbUpload(env, title, text) {
   const chunks = chunkText(text);
   if (chunks.length === 0) throw new Error("nothing to index — text was empty");
 
+  const docId = crypto.randomUUID();
   const vectors = [];
   for (let i = 0; i < chunks.length; i++) {
     const values = await embedText(env, chunks[i]);
     vectors.push({
-      id: `${crypto.randomUUID()}`,
+      id: `${docId}-${i}`,
       values,
-      metadata: { title: title || "Untitled", text: chunks[i], chunkIndex: i },
+      metadata: { title: title || "Untitled", text: chunks[i], chunkIndex: i, docId },
     });
   }
   await env.KB_VECTORIZE.upsert(vectors);
-  return { chunksIndexed: vectors.length };
+
+  // Vectorize has no native "list all uploaded docs" query, so keep a small
+  // parallel record in KV purely for the admin dashboard's doc list. The
+  // vectors themselves remain the source of truth for retrieval.
+  if (env.CHAT_KV) {
+    await env.CHAT_KV.put(
+      `kb:doc:${docId}`,
+      JSON.stringify({ id: docId, title: title || "Untitled", chunkCount: vectors.length, uploadedAt: Date.now() })
+    );
+  }
+
+  return { chunksIndexed: vectors.length, docId };
+}
+
+async function kbListDocs(env) {
+  if (!env.KB_VECTORIZE) return { configured: false, docs: [] };
+  if (!env.CHAT_KV) return { configured: true, docs: [] };
+  const list = await env.CHAT_KV.list({ prefix: "kb:doc:" });
+  const docs = [];
+  for (const k of list.keys) {
+    const raw = await env.CHAT_KV.get(k.name);
+    if (raw) docs.push(JSON.parse(raw));
+  }
+  docs.sort((a, b) => b.uploadedAt - a.uploadedAt);
+  return { configured: true, docs };
 }
 
 async function kbRetrieveContext(env, query) {
@@ -352,8 +390,40 @@ async function sendWhatsAppMessage(env, to, body) {
   return res.json();
 }
 
+// Verifies that a webhook POST really came from Twilio, per Twilio's signing
+// scheme: HMAC-SHA1 over (exact request URL + sorted "key"+"value" pairs of
+// every form field), keyed with the Auth Token, base64-encoded, and compared
+// to the X-Twilio-Signature header. The URL here must match EXACTLY what is
+// configured as the webhook URL in the Twilio console (same scheme, host,
+// path, and query string) or valid requests will fail verification too.
+async function verifyTwilioSignature(url, formData, authToken, signatureHeader) {
+  if (!signatureHeader) return false;
+  let data = url;
+  const keys = [...formData.keys()].sort();
+  for (const key of keys) data += key + formData.get(key);
+
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey("raw", enc.encode(authToken), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const sigBuffer = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(data));
+  const computed = btoa(String.fromCharCode(...new Uint8Array(sigBuffer)));
+  return computed === signatureHeader;
+}
+
 async function handleWhatsAppWebhook(request, env) {
   const formData = await request.formData();
+
+  if (env.TWILIO_AUTH_TOKEN) {
+    const signatureHeader = request.headers.get("X-Twilio-Signature");
+    const valid = await verifyTwilioSignature(request.url, formData, env.TWILIO_AUTH_TOKEN, signatureHeader);
+    if (!valid) {
+      console.error("[handleWhatsAppWebhook] rejected: invalid or missing X-Twilio-Signature");
+      return new Response("Forbidden", { status: 403 });
+    }
+  }
+  // If TWILIO_AUTH_TOKEN isn't set yet, signature checking is skipped so the
+  // feature doesn't break — but sendWhatsAppMessage() below will also fail
+  // without it, so this only matters during initial setup.
+
   const from = formData.get("From"); // e.g. "whatsapp:+8801XXXXXXXXX"
   const text = (formData.get("Body") || "").trim();
   if (!from || !text) return new Response("", { status: 200 });
@@ -651,14 +721,22 @@ function autoRoute(lastUserMessage, hasImages) {
 
 // ---------------------------------------------------------------------------
 // CORS
+// `ALLOWED_ORIGIN` can be "*", a single origin, or a comma-separated list
+// (e.g. "https://bot.handsandhead.com,https://www.handsandhead.com") so the
+// widget/dashboard works when embedded on more than one page/subdomain.
 // ---------------------------------------------------------------------------
 function corsHeaders(env, origin) {
-  const allowed = env.ALLOWED_ORIGIN || "*";
-  const allowOrigin = allowed === "*" ? "*" : allowed;
+  const configured = env.ALLOWED_ORIGIN || "*";
+  let allowOrigin = "*";
+  if (configured !== "*") {
+    const allowedList = configured.split(",").map((o) => o.trim()).filter(Boolean);
+    allowOrigin = allowedList.includes(origin) ? origin : allowedList[0] || "*";
+  }
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    Vary: "Origin",
   };
 }
 
@@ -1015,6 +1093,14 @@ function validateImages(images) {
 }
 
 // ---------------------------------------------------------------------------
+// Admin dashboard page — served directly by the Worker so it can be opened
+// as a normal https:// URL (e.g. on a phone) instead of needing a locally
+// saved HTML file, which mobile browsers often block from making
+// cross-origin fetch() calls to the Worker.
+// ---------------------------------------------------------------------------
+const ADMIN_DASHBOARD_HTML = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n<title>RAWx Bot — Admin</title>\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n<meta name=\"robots\" content=\"noindex, nofollow\" />\n<style>\n  body{ font-family: system-ui, sans-serif; background:#111; color:#eee; margin:0; padding:24px; }\n  h1{ font-size:1.1rem; margin:0 0 4px; }\n  .sub{ color:#888; font-size:0.8rem; margin-bottom:20px; }\n  .row{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }\n  .card{ background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:14px 18px; min-width:140px; }\n  .card .num{ font-size:1.6rem; font-weight:700; }\n  .card .label{ font-size:0.75rem; color:#999; margin-top:2px; }\n  #setup, .box{ background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:16px; margin-bottom:20px; }\n  input, textarea{ width:100%; box-sizing:border-box; padding:8px 10px; border-radius:6px; border:1px solid #444; background:#0d0d0d; color:#eee; font-size:0.85rem; margin-top:6px; font-family:inherit; }\n  label{ font-size:0.8rem; color:#ccc; }\n  button{ margin-top:10px; background:#fff; color:#111; border:none; border-radius:6px; padding:8px 16px; font-size:0.82rem; cursor:pointer; }\n  canvas{ background:#1a1a1a; border:1px solid #333; border-radius:10px; padding:12px; max-width:100%; }\n  .err{ color:#e66; font-size:0.85rem; margin-top:8px; }\n</style>\n</head>\n<body>\n  <h1>RAWx Bot — Admin</h1>\n  <div class=\"sub\">Aggregate usage + knowledge base only — no message content is ever shown here.</div>\n\n  <div id=\"setup\">\n    <label for=\"endpoint\">Worker URL</label>\n    <input id=\"endpoint\" placeholder=\"https://the-o.himon.workers.dev\" />\n    <label for=\"token\" style=\"margin-top:8px; display:block;\">Admin token (only needed if you set an ADMIN_TOKEN secret on the Worker)</label>\n    <input id=\"token\" placeholder=\"optional\" />\n    <button id=\"load\">Load dashboard</button>\n  </div>\n\n  <div id=\"error\" class=\"err\"></div>\n  <div class=\"row\" id=\"cards\"></div>\n  <canvas id=\"chart\" height=\"220\"></canvas>\n\n  <h1 style=\"margin-top:32px;\">Knowledge Base</h1>\n  <div class=\"sub\" id=\"kbStatus\">—</div>\n  <div class=\"box\">\n    <label for=\"kbTitle\">Document title</label>\n    <input id=\"kbTitle\" placeholder=\"e.g. 2026 Standard Pricing\" />\n    <label for=\"kbText\" style=\"margin-top:8px; display:block;\">Text content</label>\n    <textarea id=\"kbText\" rows=\"6\" placeholder=\"Paste quotation text, spec sheet, price list, etc.\"></textarea>\n    <button id=\"kbUpload\">Upload to Knowledge Base</button>\n    <div id=\"kbError\" class=\"err\"></div>\n  </div>\n  <div id=\"kbList\"></div>\n\n  <script>\n    const $ = (id) => document.getElementById(id);\n    const ENDPOINT_KEY = \"rawx_admin_endpoint\";\n    const TOKEN_KEY = \"rawx_admin_token\";\n\n    $(\"endpoint\").value = localStorage.getItem(ENDPOINT_KEY) || (location.protocol.startsWith(\"http\") ? location.origin : \"\");\n    $(\"token\").value = localStorage.getItem(TOKEN_KEY) || \"\";\n\n    function card(num, label) {\n      const el = document.createElement(\"div\");\n      el.className = \"card\";\n      el.innerHTML = `<div class=\"num\">${num}</div><div class=\"label\">${label}</div>`;\n      return el;\n    }\n\n    function drawBarChart(canvas, days) {\n      const ctx = canvas.getContext(\"2d\");\n      const w = (canvas.width = canvas.clientWidth || 600);\n      const h = canvas.height;\n      ctx.clearRect(0, 0, w, h);\n      if (days.length === 0) return;\n      const max = Math.max(...days.map((d) => d.count), 1);\n      const barW = w / days.length;\n      ctx.font = \"10px system-ui\";\n      days.forEach((d, i) => {\n        const barH = (d.count / max) * (h - 40);\n        const x = i * barW + 4;\n        const y = h - barH - 24;\n        ctx.fillStyle = \"#4caf50\";\n        ctx.fillRect(x, y, barW - 8, barH);\n        ctx.fillStyle = \"#999\";\n        ctx.fillText(d.day.slice(5), x, h - 10);\n        ctx.fillText(String(d.count), x, y - 4);\n      });\n    }\n\n    async function loadStats() {\n      const endpoint = $(\"endpoint\").value.trim().replace(/\\/$/, \"\");\n      const token = $(\"token\").value.trim();\n      $(\"error\").textContent = \"\";\n      $(\"cards\").innerHTML = \"\";\n      if (!endpoint) {\n        $(\"error\").textContent = \"Enter your Worker URL first.\";\n        return;\n      }\n      localStorage.setItem(ENDPOINT_KEY, endpoint);\n      localStorage.setItem(TOKEN_KEY, token);\n\n      try {\n        const url = new URL(endpoint + \"/api/analytics/summary\");\n        if (token) url.searchParams.set(\"token\", token);\n        const res = await fetch(url.toString());\n        if (!res.ok) throw new Error(`HTTP ${res.status} — ${res.status === 401 ? \"wrong/missing token\" : \"request failed\"}`);\n        const stats = await res.json();\n\n        $(\"cards\").appendChild(card(stats.totalMessages || 0, \"Total replies (all time)\"));\n        if (stats.avgResponseMs) $(\"cards\").appendChild(card(`${stats.avgResponseMs}ms`, \"Avg response time\"));\n        Object.entries(stats.providerCounts || {}).forEach(([name, count]) => $(\"cards\").appendChild(card(count, `via ${name}`)));\n\n        const days = (stats.perDay || []).map((d) => ({ day: d.date, count: d.messages }));\n        drawBarChart($(\"chart\"), days);\n      } catch (err) {\n        $(\"error\").textContent = err.message;\n      }\n    }\n\n    async function loadKb() {\n      const endpoint = $(\"endpoint\").value.trim().replace(/\\/$/, \"\");\n      const token = $(\"token\").value.trim();\n      if (!endpoint) return;\n      try {\n        const url = new URL(endpoint + \"/api/kb/list\");\n        if (token) url.searchParams.set(\"token\", token);\n        const res = await fetch(url.toString());\n        const data = await res.json();\n        if (!res.ok) throw new Error(data.error || \"request failed\");\n        $(\"kbStatus\").textContent = data.configured\n          ? `${data.docs.length} document(s) uploaded`\n          : \"Not configured yet — add the KB_VECTORIZE and AI bindings on the Worker first (see index.js comments).\";\n        $(\"kbList\").innerHTML = (data.docs || [])\n          .map(\n            (d) =>\n              `<div class=\"card\" style=\"margin-bottom:8px;\"><div class=\"label\">${new Date(d.uploadedAt).toLocaleString()}</div><div>${d.title} — ${d.chunkCount} chunk(s)</div></div>`\n          )\n          .join(\"\");\n      } catch (err) {\n        $(\"kbStatus\").textContent = err.message;\n      }\n    }\n\n    $(\"kbUpload\").addEventListener(\"click\", async () => {\n      const endpoint = $(\"endpoint\").value.trim().replace(/\\/$/, \"\");\n      const token = $(\"token\").value.trim();\n      const title = $(\"kbTitle\").value.trim();\n      const text = $(\"kbText\").value.trim();\n      $(\"kbError\").textContent = \"\";\n      if (!endpoint || !title || !text) {\n        $(\"kbError\").textContent = \"Worker URL, title, and text are all required.\";\n        return;\n      }\n      try {\n        const url = new URL(endpoint + \"/api/kb/upload\");\n        if (token) url.searchParams.set(\"token\", token);\n        const res = await fetch(url.toString(), {\n          method: \"POST\",\n          headers: { \"Content-Type\": \"application/json\" },\n          body: JSON.stringify({ title, text }),\n        });\n        const data = await res.json();\n        if (!res.ok) throw new Error(data.error || \"upload failed\");\n        $(\"kbTitle\").value = \"\";\n        $(\"kbText\").value = \"\";\n        loadKb();\n      } catch (err) {\n        $(\"kbError\").textContent = err.message;\n      }\n    });\n\n    $(\"load\").addEventListener(\"click\", () => {\n      loadStats();\n      loadKb();\n    });\n    if ($(\"endpoint\").value) {\n      loadStats();\n      loadKb();\n    }\n  </script>\n</body>\n</html>\n";
+
+// ---------------------------------------------------------------------------
 // Main router
 // ---------------------------------------------------------------------------
 export default {
@@ -1038,12 +1124,19 @@ export default {
       }
     }
 
+    // GET /admin — dashboard page, served same-origin to avoid mobile
+    // browsers blocking fetch() calls from a locally-opened file.
+    if (request.method === "GET" && url.pathname === "/admin") {
+      return new Response(ADMIN_DASHBOARD_HTML, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
     if (!env.CHAT_KV) {
       return json({ error: "CHAT_KV binding missing" }, 500, headers);
     }
 
     // GET /api/analytics/summary?days=7
     if (request.method === "GET" && url.pathname === "/api/analytics/summary") {
+      if (!checkAdminAuth(env, url)) return json({ error: "unauthorized" }, 401, headers);
       try {
         const summary = await getAnalyticsSummary(env, url.searchParams.get("days"));
         return json(summary, 200, headers);
@@ -1054,6 +1147,7 @@ export default {
 
     // POST /api/kb/upload  { title, text }
     if (request.method === "POST" && url.pathname === "/api/kb/upload") {
+      if (!checkAdminAuth(env, url)) return json({ error: "unauthorized" }, 401, headers);
       let kbBody;
       try {
         kbBody = await request.json();
@@ -1064,6 +1158,17 @@ export default {
       if (!text || !text.trim()) return json({ error: "text required" }, 400, headers);
       try {
         const result = await kbUpload(env, title, text.trim());
+        return json(result, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // GET /api/kb/list — used by admin-dashboard.html
+    if (request.method === "GET" && url.pathname === "/api/kb/list") {
+      if (!checkAdminAuth(env, url)) return json({ error: "unauthorized" }, 401, headers);
+      try {
+        const result = await kbListDocs(env);
         return json(result, 200, headers);
       } catch (err) {
         return json({ error: err.message }, 502, headers);

@@ -43,14 +43,26 @@ const PROVIDERS = {
     call: callGrok,
     strengths: ["current events", "fast + cheap", "casual tone"],
   },
+  openai: {
+    label: "ChatGPT (OpenAI)",
+    isConfigured: (env) => !!env.OPENAI_API_KEY,
+    call: callOpenAI,
+    strengths: ["general purpose", "coding", "wide tool/plugin ecosystem"],
+  },
 };
 
-const DEFAULT_ORDER = ["claude", "gemini", "grok"];
+const DEFAULT_ORDER = ["claude", "gemini", "grok", "openai"];
 
 const MODEL_IDS = {
   claude: "claude-sonnet-4-6",
   gemini: "gemini-3.5-flash",
   grok: "grok-4.1-fast",
+  // "gpt-5.5" is OpenAI's current flagship chat model (mid-2026). The
+  // newer gpt-5.6 family (Sol/Terra/Luna) is limited-preview as of this
+  // writing — swap the ID here once it's generally available, or drop to
+  // "gpt-5.4-mini" for a cheaper/faster tier. Check
+  // https://platform.openai.com/docs/models for the current list.
+  openai: "gpt-5.5",
 };
 
 // Image-generation model — Gemini-এর image generation API
@@ -924,6 +936,58 @@ async function callGrok(env, messages, { stream, writer, system }) {
   });
 
   if (!res.ok) throw new Error(`Grok API ${res.status}: ${await res.text()}`);
+
+  if (!stream) {
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || "";
+    return { text };
+  }
+
+  let full = "";
+  await pipeSse(res, writer, (event) => {
+    const t = event.choices?.[0]?.delta?.content || null;
+    if (t) full += t;
+    return t;
+  });
+  return { text: full };
+}
+
+async function callOpenAI(env, messages, { stream, writer, system, images }) {
+  // OpenAI's Chat Completions format takes images as content parts on the
+  // user message, same shape as Claude's — reuse that mapper.
+  const mapped = withImagesForClaude(messages, images).map((m) => {
+    if (Array.isArray(m.content)) {
+      // Claude uses {type:"image", source:{...}} — OpenAI wants
+      // {type:"image_url", image_url:{url:"data:<mime>;base64,<data>"}}.
+      return {
+        role: m.role,
+        content: m.content.map((part) =>
+          part.type === "image"
+            ? { type: "image_url", image_url: { url: `data:${part.source.media_type};base64,${part.source.data}` } }
+            : { type: "text", text: part.text }
+        ),
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  const openaiMessages = [...(system ? [{ role: "system", content: system }] : []), ...mapped];
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: MODEL_IDS.openai,
+      messages: openaiMessages,
+      max_tokens: 800,
+      stream: !!stream,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${await res.text()}`);
 
   if (!stream) {
     const data = await res.json();

@@ -1,5 +1,5 @@
 {
-  "background_color": "#ffffff",
+  "background_color": "#000000",
   "description": "RAWx BOT — triple-engine dispatch terminal. Ask, Create, Deploy. Routed live across Claude, Gemini and Grok.",
   "dir": "ltr",
   "display": "standalone",
@@ -8,5 +8,6 @@
   "scope": "/",
   "short_name": "RAWx BOT",
   "start_url": "/",
-  "theme_color": "#ff0603"
+  "theme_color": "#ff0000",
+  "id": "/"
 }

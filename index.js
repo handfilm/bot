@@ -53,10 +53,10 @@ const MODEL_IDS = {
   grok: "grok-4.1-fast",
 };
 
-// Image-generation model — Gemini-এর image generation API
+// Image-generation model — Gemini-এর image generation API (Nano Banana 2)
 // এই model ID পরিবর্তন হতে পারে Google-এর update-এ
 // যদি 404 হয়, Google AI Studio থেকে current image model খুঁজুন
-const IMAGE_MODEL_ID = "gemini-3.1-flash-image-preview";
+const IMAGE_MODEL_ID = "gemini-3.1-flash-image";
 
 // Grok Imagine video model
 const VIDEO_MODEL_ID = "grok-imagine-video";

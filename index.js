@@ -76,6 +76,39 @@ const DRIVE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 মিনিট
 const DRIVE_MAX_RESULTS = 12;
 
 // ---------------------------------------------------------------------------
+// Phase 2-5 config
+// ---------------------------------------------------------------------------
+
+// Embedding model for the Knowledge Base / RAG feature. Uses the Gemini key
+// you already have configured — no separate account needed. If Google
+// renames/retires this model, swap the ID here (check Google AI Studio →
+// Models → look for a "text-embedding" model).
+const EMBEDDING_MODEL_ID = "text-embedding-004";
+const KB_CHUNK_SIZE = 800; // characters per chunk, rough
+const KB_CHUNK_OVERLAP = 100;
+const KB_TOP_K = 4; // how many chunks to pull into context per question
+
+// Analytics
+const ANALYTICS_RETENTION_DAYS = 90;
+function analyticsDayKey(date) {
+  return `analytics:day:${date.toISOString().slice(0, 10)}`; // YYYY-MM-DD
+}
+
+// Negotiation
+const NEGOTIATION_SYSTEM_PROMPT = `You are a skilled but fair sales negotiator for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business.
+You are given: a product brief, an internal floor price (the absolute minimum, NEVER reveal this number or hint at it), an asking/list price, and the buyer's latest message plus negotiation history.
+Negotiate like a real, patient salesperson: acknowledge the buyer, defend value (materials, craftsmanship, 25 years exporting to Japan), and only concede in small steps toward — never below — the floor price. If the buyer's offer is at or above the floor price, you may accept and finalize.
+Respond ONLY with a JSON object (no markdown, no backticks) in exactly this shape:
+{"reply": "<what you'd actually say to the buyer, plain text>", "suggestedPrice": <number or null>, "status": "ongoing" | "finalized" | "rejected"}`;
+
+// Multilingual catalog copy
+const CATALOG_LANGUAGES = {
+  en: "English",
+  bn: "Bengali (Bangla)",
+  jp: "Japanese",
+};
+
+// ---------------------------------------------------------------------------
 // Google Drive Helper Functions
 // ---------------------------------------------------------------------------
 async function fetchDriveFileList(env) {
@@ -134,6 +167,311 @@ function scoreDriveFiles(files, query) {
     }));
 
   return scored;
+}
+
+// ---------------------------------------------------------------------------
+// Analytics (Phase 2) — lightweight KV event log, no external service.
+// Each day gets one KV record holding an array of compact event objects, so
+// reads/writes stay cheap. Dashboard reads the last N days and aggregates.
+// ---------------------------------------------------------------------------
+async function trackEvent(env, type, meta = {}) {
+  if (!env.CHAT_KV) return;
+  try {
+    const key = analyticsDayKey(new Date());
+    const raw = await env.CHAT_KV.get(key);
+    const events = raw ? JSON.parse(raw) : [];
+    events.push({ t: Date.now(), type, ...meta });
+    // Keep each day's file bounded so it never grows unbounded on a busy day.
+    const trimmed = events.length > 5000 ? events.slice(-5000) : events;
+    await env.CHAT_KV.put(key, JSON.stringify(trimmed), {
+      expirationTtl: ANALYTICS_RETENTION_DAYS * 24 * 60 * 60,
+    });
+  } catch (err) {
+    console.error("[trackEvent] failed:", err.message);
+  }
+}
+
+async function getAnalyticsSummary(env, days) {
+  const numDays = Math.min(Math.max(Number(days) || 7, 1), ANALYTICS_RETENTION_DAYS);
+  const now = new Date();
+  const perDay = [];
+  const providerCounts = {};
+  const questionCounts = {};
+  const reactionCounts = {};
+  let totalMessages = 0;
+  let totalResponseTimeMs = 0;
+  let responseTimeSamples = 0;
+
+  for (let i = numDays - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = analyticsDayKey(d);
+    const raw = await env.CHAT_KV.get(key);
+    const events = raw ? JSON.parse(raw) : [];
+
+    let dayMessages = 0;
+    for (const e of events) {
+      if (e.type === "message") {
+        dayMessages += 1;
+        totalMessages += 1;
+        if (e.provider) providerCounts[e.provider] = (providerCounts[e.provider] || 0) + 1;
+        if (typeof e.responseMs === "number") {
+          totalResponseTimeMs += e.responseMs;
+          responseTimeSamples += 1;
+        }
+        if (e.question) {
+          const q = e.question.toLowerCase().trim().slice(0, 80);
+          if (q) questionCounts[q] = (questionCounts[q] || 0) + 1;
+        }
+      }
+      if (e.type === "reaction" && e.emoji) {
+        reactionCounts[e.emoji] = (reactionCounts[e.emoji] || 0) + 1;
+      }
+    }
+    perDay.push({ date: d.toISOString().slice(0, 10), messages: dayMessages });
+  }
+
+  const topQuestions = Object.entries(questionCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([question, count]) => ({ question, count }));
+
+  return {
+    rangeDays: numDays,
+    totalMessages,
+    avgResponseMs: responseTimeSamples ? Math.round(totalResponseTimeMs / responseTimeSamples) : null,
+    providerCounts,
+    reactionCounts,
+    topQuestions,
+    perDay,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge Base / RAG (Phase 2)
+// Requires: a Cloudflare Vectorize index bound as `KB_VECTORIZE` in the
+// Worker's settings, created once via wrangler CLI:
+//   wrangler vectorize create rawx-kb --dimensions=768 --metric=cosine
+//   wrangler.toml (or Dashboard → Settings → Bindings → Vectorize):
+//     [[vectorize]]
+//     binding = "KB_VECTORIZE"
+//     index_name = "rawx-kb"
+// Chunk metadata (title/text) is stored alongside each vector so retrieval
+// doesn't need a second KV round-trip.
+// ---------------------------------------------------------------------------
+async function embedText(env, text) {
+  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured (needed for embeddings)");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL_ID}:embedContent?key=${env.GEMINI_API_KEY}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: `models/${EMBEDDING_MODEL_ID}`,
+      content: { parts: [{ text }] },
+    }),
+  });
+  if (!res.ok) throw new Error(`Embedding API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const values = data.embedding?.values;
+  if (!Array.isArray(values)) throw new Error("Embedding API returned no vector — check model ID");
+  return values;
+}
+
+function chunkText(text) {
+  const clean = (text || "").replace(/\s+/g, " ").trim();
+  const chunks = [];
+  let start = 0;
+  while (start < clean.length) {
+    const end = Math.min(start + KB_CHUNK_SIZE, clean.length);
+    chunks.push(clean.slice(start, end));
+    if (end === clean.length) break;
+    start = end - KB_CHUNK_OVERLAP;
+  }
+  return chunks;
+}
+
+async function kbUpload(env, title, text) {
+  if (!env.KB_VECTORIZE) throw new Error("KB_VECTORIZE binding not configured — see comments in index.js");
+  const chunks = chunkText(text);
+  if (chunks.length === 0) throw new Error("nothing to index — text was empty");
+
+  const vectors = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const values = await embedText(env, chunks[i]);
+    vectors.push({
+      id: `${crypto.randomUUID()}`,
+      values,
+      metadata: { title: title || "Untitled", text: chunks[i], chunkIndex: i },
+    });
+  }
+  await env.KB_VECTORIZE.upsert(vectors);
+  return { chunksIndexed: vectors.length };
+}
+
+async function kbRetrieveContext(env, query) {
+  if (!env.KB_VECTORIZE) return null; // KB feature simply not configured — chat proceeds without it
+  try {
+    const queryVector = await embedText(env, query);
+    const results = await env.KB_VECTORIZE.query(queryVector, { topK: KB_TOP_K, returnMetadata: true });
+    const matches = (results.matches || []).filter((m) => m.score > 0.72);
+    if (matches.length === 0) return null;
+    return matches
+      .map((m) => `[${m.metadata?.title || "Reference"}] ${m.metadata?.text || ""}`)
+      .join("\n---\n");
+  } catch (err) {
+    console.error("[kbRetrieveContext] failed:", err.message);
+    return null; // never block chat because retrieval failed
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp Integration (Phase 2)
+// Requires Twilio secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+// TWILIO_WHATSAPP_NUMBER (e.g. "whatsapp:+14155238886" for the sandbox).
+// Point Twilio's WhatsApp Sandbox / Business webhook at:
+//   POST https://<your-worker>/api/whatsapp/webhook
+// Twilio sends application/x-www-form-urlencoded, not JSON.
+// ---------------------------------------------------------------------------
+async function sendWhatsAppMessage(env, to, body) {
+  const sid = env.TWILIO_ACCOUNT_SID;
+  const token = env.TWILIO_AUTH_TOKEN;
+  const from = env.TWILIO_WHATSAPP_NUMBER;
+  if (!sid || !token || !from) throw new Error("Twilio secrets not configured");
+
+  const auth = btoa(`${sid}:${token}`);
+  const form = new URLSearchParams({ From: from, To: to, Body: body });
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: form.toString(),
+  });
+  if (!res.ok) throw new Error(`Twilio API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function handleWhatsAppWebhook(request, env) {
+  const formData = await request.formData();
+  const from = formData.get("From"); // e.g. "whatsapp:+8801XXXXXXXXX"
+  const text = (formData.get("Body") || "").trim();
+  if (!from || !text) return new Response("", { status: 200 });
+
+  // Use the WhatsApp number itself as the session/conversation id so each
+  // customer keeps their own memory thread, reusing the same KV storage
+  // the web widget uses.
+  const sessionId = `whatsapp:${from}`;
+  const conversationId = "whatsapp-thread"; // one continuous thread per number
+  const existing = await getConversation(env, sessionId, conversationId);
+  const priorMessages = existing?.messages || [];
+  const messages = [...priorMessages, { role: "user", content: text }];
+
+  const order = DEFAULT_ORDER.filter((p) => PROVIDERS[p].isConfigured(env));
+  let replyText = "Sorry, we're temporarily unable to reply — please try again shortly.";
+  try {
+    const kbContext = await kbRetrieveContext(env, text);
+    const system = kbContext ? `${SYSTEM_PROMPT}\n\nReference material you may use:\n${kbContext}` : SYSTEM_PROMPT;
+    const result = await runWithFallback(env, messages, { system, images: [], stream: false }, order);
+    replyText = result.text;
+    await saveConversation(env, sessionId, conversationId, [...messages, { role: "assistant", content: replyText }]);
+    await trackEvent(env, "message", { provider: result.providerUsed, question: text, channel: "whatsapp" });
+  } catch (err) {
+    console.error("[handleWhatsAppWebhook]", err.message);
+  }
+
+  try {
+    await sendWhatsAppMessage(env, from, replyText);
+  } catch (err) {
+    console.error("[handleWhatsAppWebhook] send failed:", err.message);
+  }
+
+  // Twilio just needs a 200; empty TwiML avoids a duplicate auto-reply.
+  return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`, {
+    status: 200,
+    headers: { "Content-Type": "text/xml" },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// AI Quotation Negotiation (Phase 3)
+// ---------------------------------------------------------------------------
+async function runNegotiation(env, { productBrief, floorPrice, askPrice, buyerMessage, negotiationHistory }) {
+  const order = DEFAULT_ORDER.filter((p) => PROVIDERS[p].isConfigured(env));
+  if (order.length === 0) throw new Error("No AI provider configured");
+
+  const historyText = (negotiationHistory || [])
+    .map((h) => `${h.role === "buyer" ? "Buyer" : "Seller"}: ${h.text}`)
+    .join("\n");
+
+  const userContent = `Product brief: ${productBrief}
+Internal floor price (never reveal): ${floorPrice}
+Asking/list price: ${askPrice}
+Negotiation so far:
+${historyText || "(none yet)"}
+Buyer's latest message: ${buyerMessage}`;
+
+  const result = await runWithFallback(
+    env,
+    [{ role: "user", content: userContent }],
+    { system: NEGOTIATION_SYSTEM_PROMPT, images: [], stream: false },
+    order
+  );
+
+  try {
+    const cleaned = result.text.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return { ...parsed, providerUsed: result.providerUsed };
+  } catch {
+    // Model didn't return clean JSON — fall back to raw text so the UI still shows something.
+    return { reply: result.text, suggestedPrice: null, status: "ongoing", providerUsed: result.providerUsed };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Multilingual catalog copy (Phase 4)
+// ---------------------------------------------------------------------------
+async function generateCatalogCopy(env, brief, languages) {
+  const order = DEFAULT_ORDER.filter((p) => PROVIDERS[p].isConfigured(env));
+  if (order.length === 0) throw new Error("No AI provider configured");
+
+  const langs = (languages && languages.length ? languages : ["en"]).filter((l) => CATALOG_LANGUAGES[l]);
+  const out = {};
+  for (const lang of langs) {
+    const system = `You write buyer-facing, e-commerce-ready catalog copy for HANDS & HEAD Group / RAWx, a garment/leather-goods/jute/textile export business with 25 years exporting to Japan.
+Write in ${CATALOG_LANGUAGES[lang]} ONLY. Given a short product brief, return a JSON object (no markdown, no backticks) shaped exactly like:
+{"description": "<2-3 short paragraphs, persuasive, Amazon/Etsy-ready>", "hashtags": ["#tag1", "#tag2", "..."]}`;
+    const result = await runWithFallback(
+      env,
+      [{ role: "user", content: brief }],
+      { system, images: [], stream: false },
+      order
+    );
+    try {
+      const cleaned = result.text.replace(/```json|```/g, "").trim();
+      out[lang] = JSON.parse(cleaned);
+    } catch {
+      out[lang] = { description: result.text, hashtags: [] };
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Product demo video prompt builder (Phase 4) — builds on the Grok Imagine
+// video pipeline above; turns a short product brief into a well-formed
+// ~30s marketing video prompt instead of asking the owner to write one.
+// ---------------------------------------------------------------------------
+async function buildDemoVideoPrompt(env, productBrief) {
+  const order = DEFAULT_ORDER.filter((p) => PROVIDERS[p].isConfigured(env));
+  if (order.length === 0) return productBrief; // no AI configured — just use the raw brief
+  const system = `You write short, vivid prompts (2-4 sentences, plain text, no markdown) for an AI video generator, describing a ~30 second product marketing clip. Given a brief about an export product (garment/leather/jute/textile), describe camera movement, lighting, and setting suitable for a professional B2B catalog/marketing video. No text overlays, no logos.`;
+  try {
+    const result = await runWithFallback(env, [{ role: "user", content: productBrief }], { system, images: [], stream: false }, order);
+    return result.text || productBrief;
+  } catch {
+    return productBrief;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +729,53 @@ async function deleteConversation(env, sessionId, conversationId) {
   await saveConversationList(env, sessionId, list.filter((c) => c.id !== conversationId));
 }
 
+// Emoji reactions (Phase 3) — tag a stored message with a reaction so it's
+// visible next time the conversation loads, and log it for analytics.
+async function reactToMessage(env, sessionId, conversationId, messageIndex, emoji) {
+  const conv = await getConversation(env, sessionId, conversationId);
+  if (!conv) throw new Error("conversation not found");
+  if (!conv.messages[messageIndex]) throw new Error("message not found");
+  conv.messages[messageIndex] = { ...conv.messages[messageIndex], reaction: emoji || null };
+  await env.CHAT_KV.put(convKey(sessionId, conversationId), JSON.stringify(conv));
+  if (emoji) await trackEvent(env, "reaction", { emoji });
+  return conv;
+}
+
+// ---------------------------------------------------------------------------
+// Real-time collaboration — LITE version (Phase 3)
+// True sub-second multiplayer (two people typing in the same thread live)
+// needs a Cloudflare Durable Object, which has to be declared as a class
+// binding in wrangler.toml and deployed via `wrangler deploy` — it can't be
+// pasted into the dashboard code editor like the rest of this Worker, so
+// it's intentionally NOT included here. See the comment block at the very
+// bottom of this file for a starter Durable Object you can add later.
+//
+// What IS included: a read-only "share" link. Anyone with the link polls
+// the same KV-backed conversation every few seconds and sees new messages
+// as they land — good enough for "let a colleague watch this quote get
+// negotiated" without needing WebSockets.
+// ---------------------------------------------------------------------------
+async function createShareLink(env, sessionId, conversationId) {
+  const conv = await getConversation(env, sessionId, conversationId);
+  if (!conv) throw new Error("conversation not found");
+  const shareId = crypto.randomUUID();
+  await env.CHAT_KV.put(
+    `share:${shareId}`,
+    JSON.stringify({ sessionId, conversationId }),
+    { expirationTtl: 7 * 24 * 60 * 60 } // share links expire after 7 days
+  );
+  return shareId;
+}
+
+async function getSharedConversation(env, shareId) {
+  const raw = await env.CHAT_KV.get(`share:${shareId}`);
+  if (!raw) throw new Error("share link not found or expired");
+  const { sessionId, conversationId } = JSON.parse(raw);
+  const conv = await getConversation(env, sessionId, conversationId);
+  if (!conv) throw new Error("conversation not found");
+  return conv;
+}
+
 function imageMarker(count) {
   return `[${count} image${count > 1 ? "s" : ""} attached]`;
 }
@@ -640,8 +1025,161 @@ export default {
 
     if (request.method === "OPTIONS") return new Response(null, { headers });
 
+    // WhatsApp webhook — Twilio posts form-encoded data, not JSON, and
+    // doesn't send an Origin header the way a browser does, so this is
+    // handled before the CHAT_KV guard's JSON-only assumptions elsewhere.
+    if (request.method === "POST" && url.pathname === "/api/whatsapp/webhook") {
+      if (!env.CHAT_KV) return new Response("", { status: 200 });
+      try {
+        return await handleWhatsAppWebhook(request, env);
+      } catch (err) {
+        console.error("[/api/whatsapp/webhook]", err.message);
+        return new Response("", { status: 200 }); // always 200 so Twilio doesn't retry-storm
+      }
+    }
+
     if (!env.CHAT_KV) {
       return json({ error: "CHAT_KV binding missing" }, 500, headers);
+    }
+
+    // GET /api/analytics/summary?days=7
+    if (request.method === "GET" && url.pathname === "/api/analytics/summary") {
+      try {
+        const summary = await getAnalyticsSummary(env, url.searchParams.get("days"));
+        return json(summary, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST /api/kb/upload  { title, text }
+    if (request.method === "POST" && url.pathname === "/api/kb/upload") {
+      let kbBody;
+      try {
+        kbBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { title, text } = kbBody;
+      if (!text || !text.trim()) return json({ error: "text required" }, 400, headers);
+      try {
+        const result = await kbUpload(env, title, text.trim());
+        return json(result, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST /api/negotiate
+    if (request.method === "POST" && url.pathname === "/api/negotiate") {
+      let negBody;
+      try {
+        negBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { productBrief, floorPrice, askPrice, buyerMessage, negotiationHistory } = negBody;
+      if (!productBrief || !buyerMessage) return json({ error: "productBrief and buyerMessage required" }, 400, headers);
+      try {
+        const result = await runNegotiation(env, { productBrief, floorPrice, askPrice, buyerMessage, negotiationHistory });
+        return json(result, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST /api/generate/catalog  { brief, languages: ["en","bn","jp"] }
+    if (request.method === "POST" && url.pathname === "/api/generate/catalog") {
+      let catBody;
+      try {
+        catBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { brief, languages } = catBody;
+      if (!brief || !brief.trim()) return json({ error: "brief required" }, 400, headers);
+      try {
+        const result = await generateCatalogCopy(env, brief.trim(), languages);
+        return json({ languages: result }, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST /api/generate/demo-video/start  { productBrief, duration, resolution, aspectRatio }
+    if (request.method === "POST" && url.pathname === "/api/generate/demo-video/start") {
+      let demoBody;
+      try {
+        demoBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const { productBrief, duration, resolution, aspectRatio } = demoBody;
+      if (!productBrief || !productBrief.trim()) return json({ error: "productBrief required" }, 400, headers);
+      try {
+        const prompt = await buildDemoVideoPrompt(env, productBrief.trim());
+        const result = await startVideoGeneration(env, {
+          prompt,
+          duration: duration || 8,
+          resolution,
+          aspectRatio,
+        });
+        return json({ ...result, promptUsed: prompt }, 200, headers);
+      } catch (err) {
+        console.error("[/api/generate/demo-video/start]", err);
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST /api/conversations/:id/react  { sessionId, messageIndex, emoji }
+    if (request.method === "POST" && /\/api\/conversations\/[^/]+\/react$/.test(url.pathname)) {
+      let reactBody;
+      try {
+        reactBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const id = url.pathname.split("/")[3];
+      const { sessionId, messageIndex, emoji } = reactBody;
+      if (!sessionId || typeof messageIndex !== "number") {
+        return json({ error: "sessionId and messageIndex required" }, 400, headers);
+      }
+      try {
+        await reactToMessage(env, sessionId, id, messageIndex, emoji);
+        return json({ ok: true }, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // POST /api/conversations/:id/share  { sessionId }  -> { shareId }
+    if (request.method === "POST" && /\/api\/conversations\/[^/]+\/share$/.test(url.pathname)) {
+      let shareBody;
+      try {
+        shareBody = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400, headers);
+      }
+      const id = url.pathname.split("/")[3];
+      const { sessionId } = shareBody;
+      if (!sessionId) return json({ error: "sessionId required" }, 400, headers);
+      try {
+        const shareId = await createShareLink(env, sessionId, id);
+        return json({ shareId }, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 502, headers);
+      }
+    }
+
+    // GET /api/shared/:shareId  -> read-only conversation, polled by viewers
+    if (request.method === "GET" && url.pathname.startsWith("/api/shared/")) {
+      const shareId = url.pathname.split("/").pop();
+      try {
+        const conv = await getSharedConversation(env, shareId);
+        return json(conv, 200, headers);
+      } catch (err) {
+        return json({ error: err.message }, 404, headers);
+      }
     }
 
     // GET /api/conversations?sessionId=...
@@ -789,7 +1327,17 @@ export default {
     let order = [chosen, ...DEFAULT_ORDER.filter((p) => p !== chosen)];
     if (hasImages) order = order.filter((p) => p !== "grok");
 
-    const callOpts = { system: system || SYSTEM_PROMPT, images };
+    // Knowledge Base retrieval (Phase 2) — only kicks in if KB_VECTORIZE is
+    // bound and something's been uploaded; otherwise this is a no-op and
+    // chat behaves exactly as before.
+    let effectiveSystem = system || SYSTEM_PROMPT;
+    if (!hasImages) {
+      const kbContext = await kbRetrieveContext(env, lastUser);
+      if (kbContext) effectiveSystem = `${effectiveSystem}\n\nReference material you may use to answer (only if relevant):\n${kbContext}`;
+    }
+
+    const callOpts = { system: effectiveSystem, images };
+    const requestStartedAt = Date.now();
 
     // Non-streaming
     if (!stream) {
@@ -801,6 +1349,12 @@ export default {
           const fullMessages = [...storedMessages, { role: "assistant", content: result.text }];
           await saveConversation(env, sessionId, conversationId, fullMessages);
         }
+        await trackEvent(env, "message", {
+          provider: result.providerUsed,
+          question: lastUser,
+          responseMs: Date.now() - requestStartedAt,
+          channel: "web",
+        });
 
         return json(result, 200, headers);
       } catch (err) {
@@ -827,6 +1381,14 @@ export default {
           const fullMessages = [...storedMessages, { role: "assistant", content: finalText }];
           await saveConversation(env, sessionId, conversationId, fullMessages);
         }
+        if (finalText) {
+          await trackEvent(env, "message", {
+            provider: order.find((name) => PROVIDERS[name]?.isConfigured(env)),
+            question: lastUser,
+            responseMs: Date.now() - requestStartedAt,
+            channel: "web",
+          });
+        }
         await writer.write(new TextEncoder().encode("data: [DONE]\n\n"));
         await writer.close();
       }
@@ -837,3 +1399,36 @@ export default {
     });
   },
 };
+
+/**
+ * ==========================================================================
+ * FUTURE: true real-time collaboration via Durable Objects
+ * ==========================================================================
+ * The lite "share link" above (polling) covers most needs. If you later
+ * want actual live multiplayer (two people watching keystrokes appear),
+ * this needs a Durable Object + WebSockets, which can't be pasted into the
+ * dashboard editor — it requires `wrangler.toml` + `wrangler deploy` from a
+ * terminal. Rough shape for later:
+ *
+ *   export class ConversationRoom {
+ *     constructor(state, env) { this.state = state; this.sessions = []; }
+ *     async fetch(request) {
+ *       const pair = new WebSocketPair();
+ *       const [client, server] = Object.values(pair);
+ *       server.accept();
+ *       this.sessions.push(server);
+ *       server.addEventListener("message", (msg) => {
+ *         for (const s of this.sessions) if (s !== server) s.send(msg.data);
+ *       });
+ *       return new Response(null, { status: 101, webSocket: client });
+ *     }
+ *   }
+ *
+ * wrangler.toml would need:
+ *   [[durable_objects.bindings]]
+ *   name = "CONVERSATION_ROOM"
+ *   class_name = "ConversationRoom"
+ * Ask me for the full implementation when you're ready to set this up via
+ * wrangler CLI — it's roughly a day of work end-to-end.
+ * ==========================================================================
+ */
